@@ -1,0 +1,6 @@
+Run these in an ADMIN Command Prompt on the SERVER PC:
+(Right-click Start > Terminal (Admin))
+
+netsh advfirewall firewall add rule name="FFXI Server TCP" dir=in action=allow protocol=TCP localport=54001,54002,54230,54231
+
+netsh advfirewall firewall add rule name="FFXI Server UDP" dir=in action=allow protocol=UDP localport=54230
