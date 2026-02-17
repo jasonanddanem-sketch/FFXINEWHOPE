@@ -338,57 +338,36 @@ class LauncherApp:
         try:
             ffxi_path = self.config.get("ffxi_path", "")
 
-            cmd = [xiloader, "--server", server_ip]
+            # xiloader v2.x supports --username and --password flags
+            cmd = [
+                xiloader,
+                "--server", server_ip,
+                "--username", username,
+                "--password", password,
+                "--hide",
+            ]
 
-            # xiloader interactive menu: 1 = Create, 2 = Login
-            choice = "1" if create_account else "2"
-            stdin_text = f"{choice}\n{username}\n{password}\n"
-
+            # Launch xiloader in a visible console window so its TUI works
             proc = subprocess.Popen(
                 cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
                 cwd=ffxi_path,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
 
-            stdout, stderr = proc.communicate(
-                input=stdin_text.encode(), timeout=30)
-            output = stdout.decode("utf-8", errors="replace")
+            self._set_status("xiloader launched — follow prompts in its window")
 
-            # Check for success indicators
-            success = (proc.returncode == 0
-                       or "success" in output.lower()
-                       or "character list" in output.lower())
+            # Launch Windower if enabled (wait for game to start)
+            if (self._windower_chk.get()
+                    and self.config.get("windower_path")):
+                windower = self.config["windower_path"]
+                if os.path.exists(windower):
+                    import time
+                    time.sleep(5)
+                    subprocess.Popen(
+                        [windower],
+                        cwd=os.path.dirname(windower))
+                    self._set_status("Game + Windower launched!")
 
-            if success:
-                self._set_status("Game launched!")
-
-                # Launch Windower if enabled
-                if (self._windower_chk.get()
-                        and self.config.get("windower_path")):
-                    windower = self.config["windower_path"]
-                    if os.path.exists(windower):
-                        import time
-                        time.sleep(3)
-                        subprocess.Popen(
-                            [windower],
-                            cwd=os.path.dirname(windower),
-                            creationflags=subprocess.CREATE_NO_WINDOW)
-                        self._set_status("Game + Windower launched!")
-            else:
-                msg = output.strip() or stderr.decode(
-                    "utf-8", errors="replace").strip() or "Unknown error"
-                self._set_status("Failed")
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Launch Failed", msg))
-
-        except subprocess.TimeoutExpired:
-            self._set_status("Timed out")
-            self.root.after(0, lambda: messagebox.showerror(
-                "Timeout", "Connection timed out.\n"
-                           "Is the server running?"))
         except Exception as exc:
             self._set_status("Error")
             self.root.after(0, lambda: messagebox.showerror(
