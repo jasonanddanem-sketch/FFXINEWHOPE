@@ -327,14 +327,20 @@ class LauncherApp:
         action = "Creating account..." if create_account else "Logging in..."
         self._status_var.set(action)
 
+        # Read tkinter vars from main thread before spawning background thread
+        use_windower = self._windower_chk.get()
+        windower_path = self.config.get("windower_path", "")
+
         t = threading.Thread(target=self._do_launch,
                              args=(xiloader, server_ip,
-                                   username, password, create_account),
+                                   username, password,
+                                   use_windower, windower_path),
                              daemon=True)
         t.start()
 
     def _do_launch(self, xiloader: str, server_ip: str,
-                   username: str, password: str, create_account: bool):
+                   username: str, password: str,
+                   use_windower: bool, windower_path: str):
         try:
             ffxi_path = self.config.get("ffxi_path", "")
 
@@ -354,19 +360,16 @@ class LauncherApp:
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
 
-            self._set_status("xiloader launched — follow prompts in its window")
+            self._set_status("xiloader launched!")
 
-            # Launch Windower if enabled (wait for game to start)
-            if (self._windower_chk.get()
-                    and self.config.get("windower_path")):
-                windower = self.config["windower_path"]
-                if os.path.exists(windower):
-                    import time
-                    time.sleep(5)
-                    subprocess.Popen(
-                        [windower],
-                        cwd=os.path.dirname(windower))
-                    self._set_status("Game + Windower launched!")
+            # Launch Windower after game has time to start
+            if use_windower and windower_path and os.path.exists(windower_path):
+                import time
+                time.sleep(8)
+                subprocess.Popen(
+                    [windower_path],
+                    cwd=os.path.dirname(windower_path))
+                self._set_status("Windower launched!")
 
         except Exception as exc:
             self._set_status("Error")
