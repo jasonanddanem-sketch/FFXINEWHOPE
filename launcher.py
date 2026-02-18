@@ -16,7 +16,7 @@ import tempfile
 # ---------------------------------------------------------------------------
 # Version & Repo
 # ---------------------------------------------------------------------------
-VERSION = "1.1"
+VERSION = "1.2"
 REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/main"
 
 # ---------------------------------------------------------------------------
@@ -254,6 +254,14 @@ class LauncherApp:
                        activeforeground=FG,
                        font=("Segoe UI", 9)).pack(side="left")
 
+        self._windowed_chk = tk.BooleanVar(
+            value=self.config.get("windowed_mode", True))
+        tk.Checkbutton(chk_frame, text="Windowed",
+                       variable=self._windowed_chk, bg=BG, fg=FG,
+                       selectcolor=BG_ENTRY, activebackground=BG,
+                       activeforeground=FG,
+                       font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
+
         self._windower_chk = tk.BooleanVar(
             value=bool(self.config.get("windower_path")))
         if self.config.get("windower_path"):
@@ -340,7 +348,15 @@ class LauncherApp:
 
         # Read tkinter vars from main thread before spawning background thread
         use_windower = self._windower_chk.get()
+        use_windowed = self._windowed_chk.get()
         windower_path = self.config.get("windower_path", "")
+
+        # Save windowed preference
+        self.config["windowed_mode"] = use_windowed
+        self._save_config()
+
+        # Force windowed mode in the registry before launching
+        self._set_ffxi_windowed(use_windowed)
 
         t = threading.Thread(target=self._do_launch,
                              args=(xiloader, server_ip,
@@ -353,7 +369,16 @@ class LauncherApp:
                    username: str, password: str,
                    use_windower: bool, windower_path: str):
         try:
+            import time
             ffxi_path = self.config.get("ffxi_path", "")
+
+            # Launch Windower FIRST so it's ready to hook into pol.exe
+            if use_windower and windower_path and os.path.exists(windower_path):
+                self._set_status("Starting Windower...")
+                subprocess.Popen(
+                    [windower_path],
+                    cwd=os.path.dirname(windower_path))
+                time.sleep(3)
 
             # xiloader v2.x supports --username and --password flags
             cmd = [
@@ -365,27 +390,48 @@ class LauncherApp:
             ]
 
             # Launch xiloader in a visible console window so its TUI works
+            self._set_status("Launching xiloader...")
             proc = subprocess.Popen(
                 cmd,
                 cwd=ffxi_path,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
 
-            self._set_status("xiloader launched!")
-
-            # Launch Windower after game has time to start
-            if use_windower and windower_path and os.path.exists(windower_path):
-                import time
-                time.sleep(8)
-                subprocess.Popen(
-                    [windower_path],
-                    cwd=os.path.dirname(windower_path))
-                self._set_status("Windower launched!")
+            self._set_status("Game launched!")
 
         except Exception as exc:
             self._set_status("Error")
             self.root.after(0, lambda: messagebox.showerror(
                 "Error", str(exc)))
+
+    # ------------------------------------------------------------------
+    # FFXI registry helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _set_ffxi_windowed(windowed: bool):
+        """Set FFXI windowed/fullscreen mode in the Windows registry."""
+        try:
+            import winreg
+            key_path = r"SOFTWARE\PlayOnlineUS\SquareEnix\FinalFantasyXI"
+            # Try both 32-bit and 64-bit registry views
+            for access in [winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY]:
+                try:
+                    key = winreg.OpenKey(
+                        winreg.HKEY_LOCAL_MACHINE, key_path,
+                        0, winreg.KEY_SET_VALUE | access)
+                    # 0003=0 for windowed, 0003=nonzero for fullscreen
+                    winreg.SetValueEx(key, "0003", 0, winreg.REG_DWORD,
+                                      0 if windowed else 1)
+                    # 0037 = windowed mode flag (some FFXI versions)
+                    winreg.SetValueEx(key, "0037", 0, winreg.REG_DWORD,
+                                      1 if windowed else 0)
+                    winreg.CloseKey(key)
+                except FileNotFoundError:
+                    continue
+                except PermissionError:
+                    continue
+        except Exception:
+            pass  # Non-critical, game may still work
 
     # ------------------------------------------------------------------
     # Update logic
