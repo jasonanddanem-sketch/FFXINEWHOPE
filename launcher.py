@@ -16,7 +16,7 @@ import tempfile
 # ---------------------------------------------------------------------------
 # Version & Repo
 # ---------------------------------------------------------------------------
-VERSION = "1.2"
+VERSION = "1.3"
 REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/main"
 
 # ---------------------------------------------------------------------------
@@ -372,30 +372,41 @@ class LauncherApp:
             import time
             ffxi_path = self.config.get("ffxi_path", "")
 
-            # Launch Windower FIRST so it's ready to hook into pol.exe
             if use_windower and windower_path and os.path.exists(windower_path):
-                self._set_status("Starting Windower...")
+                # Launch through Windower — it will start xiloader which
+                # starts pol.exe, and Windower hooks in for rendering/addons.
+                xiloader_args = (
+                    f"--server {server_ip} "
+                    f"--username {username} "
+                    f"--password {password} "
+                    f"--hide"
+                )
+                cmd = [
+                    windower_path,
+                    f"--executable={xiloader}",
+                    f"--args={xiloader_args}",
+                ]
+
+                self._set_status("Launching via Windower...")
                 subprocess.Popen(
-                    [windower_path],
+                    cmd,
                     cwd=os.path.dirname(windower_path))
-                time.sleep(3)
+            else:
+                # No Windower — launch xiloader directly
+                cmd = [
+                    xiloader,
+                    "--server", server_ip,
+                    "--username", username,
+                    "--password", password,
+                    "--hide",
+                ]
 
-            # xiloader v2.x supports --username and --password flags
-            cmd = [
-                xiloader,
-                "--server", server_ip,
-                "--username", username,
-                "--password", password,
-                "--hide",
-            ]
-
-            # Launch xiloader in a visible console window so its TUI works
-            self._set_status("Launching xiloader...")
-            proc = subprocess.Popen(
-                cmd,
-                cwd=ffxi_path,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
+                self._set_status("Launching xiloader...")
+                subprocess.Popen(
+                    cmd,
+                    cwd=ffxi_path,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
 
             self._set_status("Game launched!")
 
