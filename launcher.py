@@ -16,7 +16,7 @@ import tempfile
 # ---------------------------------------------------------------------------
 # Version & Repo
 # ---------------------------------------------------------------------------
-VERSION = "1.3"
+VERSION = "1.4"
 REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/main"
 
 # ---------------------------------------------------------------------------
@@ -254,23 +254,6 @@ class LauncherApp:
                        activeforeground=FG,
                        font=("Segoe UI", 9)).pack(side="left")
 
-        self._windowed_chk = tk.BooleanVar(
-            value=self.config.get("windowed_mode", True))
-        tk.Checkbutton(chk_frame, text="Windowed",
-                       variable=self._windowed_chk, bg=BG, fg=FG,
-                       selectcolor=BG_ENTRY, activebackground=BG,
-                       activeforeground=FG,
-                       font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
-
-        self._windower_chk = tk.BooleanVar(
-            value=bool(self.config.get("windower_path")))
-        if self.config.get("windower_path"):
-            tk.Checkbutton(chk_frame, text="Use Windower",
-                           variable=self._windower_chk, bg=BG, fg=FG,
-                           selectcolor=BG_ENTRY, activebackground=BG,
-                           activeforeground=FG,
-                           font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
-
         # Buttons
         self._button(frame, "Login", self._login,
                      colour=GREEN_BTN, width=30).pack(pady=(15, 6))
@@ -342,73 +325,75 @@ class LauncherApp:
             return
 
         server_ip = self.config.get("server_ip", "127.0.0.1")
+        windower_path = self.config.get("windower_path", "")
 
         action = "Creating account..." if create_account else "Logging in..."
         self._status_var.set(action)
 
-        # Read tkinter vars from main thread before spawning background thread
-        use_windower = self._windower_chk.get()
-        use_windowed = self._windowed_chk.get()
-        windower_path = self.config.get("windower_path", "")
-
-        # Save windowed preference
-        self.config["windowed_mode"] = use_windowed
-        self._save_config()
-
-        # Force windowed mode in the registry before launching
-        self._set_ffxi_windowed(use_windowed)
-
         t = threading.Thread(target=self._do_launch,
                              args=(xiloader, server_ip,
                                    username, password,
-                                   use_windower, windower_path),
+                                   windower_path),
                              daemon=True)
         t.start()
 
     def _do_launch(self, xiloader: str, server_ip: str,
                    username: str, password: str,
-                   use_windower: bool, windower_path: str):
+                   windower_path: str):
         try:
             import time
             ffxi_path = self.config.get("ffxi_path", "")
 
-            if use_windower and windower_path and os.path.exists(windower_path):
-                # Launch through Windower — it will start xiloader which
-                # starts pol.exe, and Windower hooks in for rendering/addons.
-                xiloader_args = (
-                    f"--server {server_ip} "
-                    f"--username {username} "
-                    f"--password {password} "
-                    f"--hide"
-                )
-                cmd = [
-                    windower_path,
-                    f"--executable={xiloader}",
-                    f"--args={xiloader_args}",
-                ]
+            # Step 1: Launch xiloader (handles auth + starts pol.exe)
+            cmd = [
+                xiloader,
+                "--server", server_ip,
+                "--username", username,
+                "--password", password,
+                "--hide",
+            ]
 
-                self._set_status("Launching via Windower...")
-                subprocess.Popen(
-                    cmd,
-                    cwd=os.path.dirname(windower_path))
+            self._set_status("Authenticating...")
+            subprocess.Popen(
+                cmd,
+                cwd=ffxi_path,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+
+            # Step 2: If Windower is configured, wait for FFXI to start
+            # then launch Windower so it hooks into the running process
+            if windower_path and os.path.exists(windower_path):
+                self._set_status("Waiting for FFXI to start...")
+
+                # Wait up to 30 seconds for pol.exe to appear
+                found = False
+                for i in range(30):
+                    time.sleep(1)
+                    try:
+                        result = subprocess.run(
+                            ["tasklist", "/FI", "IMAGENAME eq pol.exe", "/NH"],
+                            capture_output=True, text=True, timeout=5,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                        )
+                        if "pol.exe" in result.stdout.lower():
+                            found = True
+                            break
+                    except Exception:
+                        pass
+
+                if found:
+                    # Give pol.exe a few more seconds to fully initialize
+                    time.sleep(5)
+                    self._set_status("Launching Windower...")
+                    subprocess.Popen(
+                        [windower_path],
+                        cwd=os.path.dirname(windower_path),
+                    )
+                    self._set_status("Game launched with Windower!")
+                else:
+                    self._set_status("Game launched! (Start Windower manually if needed)")
             else:
-                # No Windower — launch xiloader directly
-                cmd = [
-                    xiloader,
-                    "--server", server_ip,
-                    "--username", username,
-                    "--password", password,
-                    "--hide",
-                ]
-
-                self._set_status("Launching xiloader...")
-                subprocess.Popen(
-                    cmd,
-                    cwd=ffxi_path,
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
-
-            self._set_status("Game launched!")
+                self._set_status("Game launched!")
 
         except Exception as exc:
             self._set_status("Error")
