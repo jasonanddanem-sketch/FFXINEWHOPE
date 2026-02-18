@@ -254,6 +254,15 @@ class LauncherApp:
                        activeforeground=FG,
                        font=("Segoe UI", 9)).pack(side="left")
 
+        self._windower_chk = tk.BooleanVar(
+            value=bool(self.config.get("windower_path")))
+        if self.config.get("windower_path"):
+            tk.Checkbutton(chk_frame, text="Use Windower",
+                           variable=self._windower_chk, bg=BG, fg=FG,
+                           selectcolor=BG_ENTRY, activebackground=BG,
+                           activeforeground=FG,
+                           font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
+
         # Buttons
         self._button(frame, "Login", self._login,
                      colour=GREEN_BTN, width=30).pack(pady=(15, 6))
@@ -325,6 +334,7 @@ class LauncherApp:
             return
 
         server_ip = self.config.get("server_ip", "127.0.0.1")
+        use_windower = self._windower_chk.get() if hasattr(self, '_windower_chk') else False
         windower_path = self.config.get("windower_path", "")
 
         action = "Creating account..." if create_account else "Logging in..."
@@ -333,13 +343,13 @@ class LauncherApp:
         t = threading.Thread(target=self._do_launch,
                              args=(xiloader, server_ip,
                                    username, password,
-                                   windower_path),
+                                   use_windower, windower_path),
                              daemon=True)
         t.start()
 
     def _do_launch(self, xiloader: str, server_ip: str,
                    username: str, password: str,
-                   windower_path: str):
+                   use_windower: bool, windower_path: str):
         try:
             import time
             ffxi_path = self.config.get("ffxi_path", "")
@@ -360,9 +370,9 @@ class LauncherApp:
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
 
-            # Step 2: If Windower is configured, wait for FFXI to start
+            # Step 2: If Windower is enabled, wait for FFXI to start
             # then launch Windower so it hooks into the running process
-            if windower_path and os.path.exists(windower_path):
+            if use_windower and windower_path and os.path.exists(windower_path):
                 self._set_status("Waiting for FFXI to start...")
 
                 # Wait up to 30 seconds for pol.exe to appear
