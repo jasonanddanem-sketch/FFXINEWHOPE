@@ -10,6 +10,14 @@ import os
 import subprocess
 import threading
 import sys
+import urllib.request
+import tempfile
+
+# ---------------------------------------------------------------------------
+# Version & Repo
+# ---------------------------------------------------------------------------
+VERSION = "1.1"
+REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/main"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -33,6 +41,7 @@ GOLD      = "#e2b714"
 BLUE_BTN  = "#1a73e8"
 GREEN_BTN = "#2e7d32"
 RED_BTN   = "#c62828"
+ORANGE    = "#e67e22"
 
 
 # ===================================================================
@@ -206,7 +215,7 @@ class LauncherApp:
     # ==================================================================
     def _show_login(self):
         self._clear()
-        self.root.geometry("400x520")
+        self.root.geometry("400x560")
 
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True, padx=30, pady=20)
@@ -258,7 +267,9 @@ class LauncherApp:
         self._button(frame, "Login", self._login,
                      colour=GREEN_BTN, width=30).pack(pady=(15, 6))
         self._button(frame, "Create Account", self._create_account,
-                     colour=BLUE_BTN, width=30).pack(pady=(0, 10))
+                     colour=BLUE_BTN, width=30).pack(pady=(0, 6))
+        self._button(frame, "Check for Updates", self._check_updates,
+                     colour=ORANGE, width=30).pack(pady=(0, 10))
 
         # Status
         self._status_var = tk.StringVar(value="Ready")
@@ -270,7 +281,7 @@ class LauncherApp:
         bot.pack(side="bottom", fill="x")
 
         self._label(bot,
-                    f"Server: {self.config.get('server_ip', '127.0.0.1')}",
+                    f"v{VERSION}  |  Server: {self.config.get('server_ip', '127.0.0.1')}",
                     size=8, colour=FG_DIM).pack(side="left")
         self._button(bot, "Settings", self._show_setup,
                      colour=BG_LIGHT, width=8).pack(side="right")
@@ -375,6 +386,104 @@ class LauncherApp:
             self._set_status("Error")
             self.root.after(0, lambda: messagebox.showerror(
                 "Error", str(exc)))
+
+    # ------------------------------------------------------------------
+    # Update logic
+    # ------------------------------------------------------------------
+    def _check_updates(self):
+        self._status_var.set("Checking for updates...")
+        t = threading.Thread(target=self._do_check_updates, daemon=True)
+        t.start()
+
+    def _do_check_updates(self):
+        try:
+            # Fetch remote version
+            url = f"{REPO_RAW}/version.txt"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                remote_version = resp.read().decode("utf-8").strip()
+
+            if remote_version == VERSION:
+                self._set_status(f"You're up to date! (v{VERSION})")
+                return
+
+            # New version available — ask user
+            msg = (f"Update available!\n\n"
+                   f"Current: v{VERSION}\n"
+                   f"New: v{remote_version}\n\n"
+                   f"Download and install the update?")
+
+            do_update = [False]
+
+            def ask():
+                do_update[0] = messagebox.askyesno("Update Available", msg)
+
+            self.root.after(0, ask)
+
+            # Wait for user response
+            import time
+            while not do_update[0] and do_update == [False]:
+                time.sleep(0.2)
+                # Check if dialog was answered
+                try:
+                    self.root.after(0, lambda: None)
+                except:
+                    return
+
+            # Give the dialog time to close and set the value
+            time.sleep(0.5)
+
+            if not do_update[0]:
+                self._set_status("Update cancelled.")
+                return
+
+            self._set_status("Downloading update...")
+
+            # Download new launcher exe
+            exe_url = f"{REPO_RAW}/dist/NewHope%20Launcher.exe"
+            update_path = os.path.join(APP_DIR, "NewHope Launcher_update.exe")
+
+            urllib.request.urlretrieve(exe_url, update_path)
+
+            if not os.path.exists(update_path) or os.path.getsize(update_path) < 100000:
+                os.remove(update_path)
+                self._set_status("Download failed.")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Error", "Download failed — file too small or corrupted."))
+                return
+
+            # Write the updater batch script
+            if getattr(sys, "frozen", False):
+                exe_name = os.path.basename(sys.executable)
+            else:
+                exe_name = "NewHope Launcher.exe"
+
+            bat_path = os.path.join(APP_DIR, "_update.bat")
+            with open(bat_path, "w") as f:
+                f.write(f'@echo off\n')
+                f.write(f'echo Updating New Hope Launcher...\n')
+                f.write(f'timeout /t 3 /nobreak >nul\n')
+                f.write(f'del "{exe_name}"\n')
+                f.write(f'ren "NewHope Launcher_update.exe" "{exe_name}"\n')
+                f.write(f'start "" "{exe_name}"\n')
+                f.write(f'del "%~f0"\n')
+
+            self._set_status("Restarting to apply update...")
+
+            # Launch the batch script and exit
+            subprocess.Popen(
+                [bat_path],
+                cwd=APP_DIR,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+
+            self.root.after(500, self.root.destroy)
+
+        except urllib.error.URLError:
+            self._set_status("Could not reach update server.")
+        except Exception as exc:
+            self._set_status("Update check failed.")
+            self.root.after(0, lambda: messagebox.showerror(
+                "Update Error", str(exc)))
 
     def _set_status(self, text: str):
         self.root.after(0, lambda: self._status_var.set(text))
