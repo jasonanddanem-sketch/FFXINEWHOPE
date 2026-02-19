@@ -242,6 +242,15 @@ class LauncherApp:
         pw_entry = self._entry(frame, self._pass_var, show="*", width=34)
         pw_entry.pack(anchor="w", pady=(2, 8))
 
+        # Load remembered password
+        if self.config.get("remember_pass") and self.config.get("saved_pass"):
+            import base64
+            try:
+                self._pass_var.set(
+                    base64.b64decode(self.config["saved_pass"]).decode("utf-8"))
+            except Exception:
+                pass
+
         # Checkboxes row
         chk_frame = tk.Frame(frame, bg=BG)
         chk_frame.pack(anchor="w", pady=(0, 5))
@@ -253,6 +262,14 @@ class LauncherApp:
                        selectcolor=BG_ENTRY, activebackground=BG,
                        activeforeground=FG,
                        font=("Segoe UI", 9)).pack(side="left")
+
+        self._remember_pass_var = tk.BooleanVar(
+            value=self.config.get("remember_pass", False))
+        tk.Checkbutton(chk_frame, text="Remember password",
+                       variable=self._remember_pass_var, bg=BG, fg=FG,
+                       selectcolor=BG_ENTRY, activebackground=BG,
+                       activeforeground=FG,
+                       font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
 
         self._windower_chk = tk.BooleanVar(
             value=bool(self.config.get("windower_path")))
@@ -323,6 +340,15 @@ class LauncherApp:
             self.config["username"] = username
         else:
             self.config.pop("username", None)
+
+        self.config["remember_pass"] = self._remember_pass_var.get()
+        if self._remember_pass_var.get():
+            import base64
+            self.config["saved_pass"] = base64.b64encode(
+                password.encode("utf-8")).decode("utf-8")
+        else:
+            self.config.pop("saved_pass", None)
+
         self._save_config()
 
         # Find xiloader
