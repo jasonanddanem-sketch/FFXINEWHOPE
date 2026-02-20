@@ -380,7 +380,6 @@ class LauncherApp:
             import time
             ffxi_path = self.config.get("ffxi_path", "")
 
-            # Step 1: Launch xiloader (handles auth + starts pol.exe)
             cmd = [
                 xiloader,
                 "--server", server_ip,
@@ -389,46 +388,36 @@ class LauncherApp:
                 "--hide",
             ]
 
-            self._set_status("Authenticating...")
-            subprocess.Popen(
-                cmd,
-                cwd=ffxi_path,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-
-            # Step 2: If Windower is enabled, wait for FFXI to start
-            # then launch Windower so it hooks into the running process
             if use_windower and windower_path and os.path.exists(windower_path):
-                self._set_status("Waiting for FFXI to start...")
+                # Step 1: Launch Windower FIRST so it can hook into the game
+                # Windower must be running before the game starts to inject
+                # its plugins properly.
+                self._set_status("Starting Windower...")
+                subprocess.Popen(
+                    [windower_path],
+                    cwd=os.path.dirname(windower_path),
+                )
 
-                # Wait up to 30 seconds for pol.exe to appear
-                found = False
-                for i in range(30):
-                    time.sleep(1)
-                    try:
-                        result = subprocess.run(
-                            ["tasklist", "/FI", "IMAGENAME eq pol.exe", "/NH"],
-                            capture_output=True, text=True, timeout=5,
-                            creationflags=subprocess.CREATE_NO_WINDOW,
-                        )
-                        if "pol.exe" in result.stdout.lower():
-                            found = True
-                            break
-                    except Exception:
-                        pass
+                # Step 2: Wait for Windower to fully initialize
+                time.sleep(5)
 
-                if found:
-                    # Give pol.exe a few more seconds to fully initialize
-                    time.sleep(5)
-                    self._set_status("Launching Windower...")
-                    subprocess.Popen(
-                        [windower_path],
-                        cwd=os.path.dirname(windower_path),
-                    )
-                    self._set_status("Game launched with Windower!")
-                else:
-                    self._set_status("Game launched! (Start Windower manually if needed)")
+                # Step 3: Launch xiloader (auth + starts pol.exe)
+                # Windower will detect the new game process and hook in
+                self._set_status("Authenticating...")
+                subprocess.Popen(
+                    cmd,
+                    cwd=ffxi_path,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+                self._set_status("Game launched with Windower!")
             else:
+                # No Windower — just launch xiloader directly
+                self._set_status("Authenticating...")
+                subprocess.Popen(
+                    cmd,
+                    cwd=ffxi_path,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
                 self._set_status("Game launched!")
 
         except Exception as exc:
