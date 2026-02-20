@@ -54,6 +54,9 @@ class LauncherApp:
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
 
+        # Set window icon
+        self._set_window_icon()
+
         self.config = self._load_config()
 
         # Load logo images (keep references to prevent garbage collection)
@@ -90,6 +93,19 @@ class LauncherApp:
     # ------------------------------------------------------------------
     # UI helpers
     # ------------------------------------------------------------------
+    def _set_window_icon(self):
+        """Set the window/taskbar icon from icon.ico or icon.png."""
+        ico_path = os.path.join(APP_DIR, "icon.ico")
+        png_path = os.path.join(APP_DIR, "icon.png")
+        try:
+            if os.path.exists(ico_path):
+                self.root.iconbitmap(ico_path)
+            elif os.path.exists(png_path):
+                icon = tk.PhotoImage(file=png_path)
+                self.root.iconphoto(True, icon)
+        except Exception:
+            pass  # Fall back to default icon
+
     def _load_image(self, filename: str):
         """Load a PNG image from the app directory. Returns None on failure."""
         path = os.path.join(APP_DIR, filename)
