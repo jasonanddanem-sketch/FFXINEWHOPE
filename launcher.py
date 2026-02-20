@@ -16,7 +16,7 @@ import tempfile
 # ---------------------------------------------------------------------------
 # Version & Repo
 # ---------------------------------------------------------------------------
-VERSION = "1.4"
+VERSION = "1.5"
 REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/main"
 
 # ---------------------------------------------------------------------------
@@ -56,6 +56,10 @@ class LauncherApp:
 
         self.config = self._load_config()
 
+        # Load logo images (keep references to prevent garbage collection)
+        self._logo_img = self._load_image("logo.png")
+        self._logo_small_img = self._load_image("logo_small.png")
+
         # Show the right screen
         if not self.config.get("ffxi_path"):
             self._show_setup()
@@ -86,6 +90,16 @@ class LauncherApp:
     # ------------------------------------------------------------------
     # UI helpers
     # ------------------------------------------------------------------
+    def _load_image(self, filename: str):
+        """Load a PNG image from the app directory. Returns None on failure."""
+        path = os.path.join(APP_DIR, filename)
+        if not os.path.exists(path):
+            return None
+        try:
+            return tk.PhotoImage(file=path)
+        except Exception:
+            return None
+
     def _centre_window(self):
         w = self.root.winfo_width()
         h = self.root.winfo_height()
@@ -123,16 +137,20 @@ class LauncherApp:
     # ==================================================================
     def _show_setup(self):
         self._clear()
-        self.root.geometry("520x480")
+        self.root.geometry("520x560")
 
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True, padx=30, pady=20)
 
-        # Title
-        self._label(frame, "New Hope", size=20, bold=True,
-                    colour=GOLD).pack(pady=(0, 2))
+        # Logo or fallback text
+        if self._logo_small_img:
+            tk.Label(frame, image=self._logo_small_img, bg=BG).pack(
+                pady=(0, 5))
+        else:
+            self._label(frame, "New Hope", size=20, bold=True,
+                        colour=GOLD).pack(pady=(0, 2))
         self._label(frame, "First-Time Setup", size=11,
-                    colour=FG_DIM).pack(pady=(0, 20))
+                    colour=FG_DIM).pack(pady=(0, 15))
 
         # --- FFXI Path ---
         self._label(frame, "FFXI Installation Folder", size=10,
@@ -215,16 +233,19 @@ class LauncherApp:
     # ==================================================================
     def _show_login(self):
         self._clear()
-        self.root.geometry("400x560")
+        self.root.geometry("420x680")
 
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True, padx=30, pady=20)
 
-        # Branding
-        self._label(frame, "NEW HOPE", size=28, bold=True,
-                    colour=GOLD).pack(pady=(10, 0))
-        self._label(frame, "Final Fantasy XI", size=12,
-                    colour=FG_DIM).pack(pady=(0, 30))
+        # Logo or fallback text
+        if self._logo_img:
+            tk.Label(frame, image=self._logo_img, bg=BG).pack(pady=(5, 15))
+        else:
+            self._label(frame, "NEW HOPE", size=28, bold=True,
+                        colour=GOLD).pack(pady=(10, 0))
+            self._label(frame, "Final Fantasy XI", size=12,
+                        colour=FG_DIM).pack(pady=(0, 30))
 
         # Username
         self._label(frame, "Username", size=10, bold=True).pack(anchor="w")
@@ -474,33 +495,23 @@ class LauncherApp:
                 self._set_status(f"You're up to date! (v{VERSION})")
                 return
 
-            # New version available — ask user
+            # New version available — ask user on the main thread
             msg = (f"Update available!\n\n"
                    f"Current: v{VERSION}\n"
                    f"New: v{remote_version}\n\n"
                    f"Download and install the update?")
 
-            do_update = [False]
+            result = [None]
+            answered = threading.Event()
 
             def ask():
-                do_update[0] = messagebox.askyesno("Update Available", msg)
+                result[0] = messagebox.askyesno("Update Available", msg)
+                answered.set()
 
             self.root.after(0, ask)
+            answered.wait(timeout=120)
 
-            # Wait for user response
-            import time
-            while not do_update[0] and do_update == [False]:
-                time.sleep(0.2)
-                # Check if dialog was answered
-                try:
-                    self.root.after(0, lambda: None)
-                except:
-                    return
-
-            # Give the dialog time to close and set the value
-            time.sleep(0.5)
-
-            if not do_update[0]:
+            if not result[0]:
                 self._set_status("Update cancelled.")
                 return
 
@@ -513,7 +524,8 @@ class LauncherApp:
             urllib.request.urlretrieve(exe_url, update_path)
 
             if not os.path.exists(update_path) or os.path.getsize(update_path) < 100000:
-                os.remove(update_path)
+                if os.path.exists(update_path):
+                    os.remove(update_path)
                 self._set_status("Download failed.")
                 self.root.after(0, lambda: messagebox.showerror(
                     "Error", "Download failed — file too small or corrupted."))
@@ -537,16 +549,19 @@ class LauncherApp:
 
             self._set_status("Restarting to apply update...")
 
-            # Launch the batch script and exit
+            # Launch the batch script via cmd.exe and exit
             subprocess.Popen(
-                [bat_path],
+                ["cmd.exe", "/c", bat_path],
                 cwd=APP_DIR,
                 creationflags=subprocess.CREATE_NO_WINDOW)
 
             self.root.after(500, self.root.destroy)
 
-        except urllib.error.URLError:
+        except urllib.error.URLError as exc:
             self._set_status("Could not reach update server.")
+            self.root.after(0, lambda: messagebox.showerror(
+                "Update Error",
+                f"Could not reach the update server.\n\n{exc}"))
         except Exception as exc:
             self._set_status("Update check failed.")
             self.root.after(0, lambda: messagebox.showerror(
