@@ -13,7 +13,7 @@ if %errorlevel% neq 0 (
 pip install pyinstaller >nul 2>&1
 
 echo Building .exe ...
-pyinstaller --onefile --noconsole --name "NewHope Launcher" --icon=icon.ico launcher.py
+pyinstaller --onefile --noconsole --name "NewHope Launcher" --icon=icon.ico --add-data "logo.png;." --add-data "logo_small.png;." --add-data "icon.ico;." --add-data "icon.png;." launcher.py
 
 echo.
 if exist "dist\NewHope Launcher.exe" (

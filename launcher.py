@@ -24,8 +24,11 @@ REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/m
 # ---------------------------------------------------------------------------
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
+    # PyInstaller --onefile extracts bundled data to a temp dir
+    DATA_DIR = getattr(sys, "_MEIPASS", APP_DIR)
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = APP_DIR
 
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 
@@ -95,8 +98,8 @@ class LauncherApp:
     # ------------------------------------------------------------------
     def _set_window_icon(self):
         """Set the window/taskbar icon from icon.ico or icon.png."""
-        ico_path = os.path.join(APP_DIR, "icon.ico")
-        png_path = os.path.join(APP_DIR, "icon.png")
+        ico_path = os.path.join(DATA_DIR, "icon.ico")
+        png_path = os.path.join(DATA_DIR, "icon.png")
         try:
             if os.path.exists(ico_path):
                 self.root.iconbitmap(ico_path)
@@ -107,14 +110,15 @@ class LauncherApp:
             pass  # Fall back to default icon
 
     def _load_image(self, filename: str):
-        """Load a PNG image from the app directory. Returns None on failure."""
-        path = os.path.join(APP_DIR, filename)
-        if not os.path.exists(path):
-            return None
-        try:
-            return tk.PhotoImage(file=path)
-        except Exception:
-            return None
+        """Load a PNG image. Checks bundled data dir first, then app dir."""
+        for base in (DATA_DIR, APP_DIR):
+            path = os.path.join(base, filename)
+            if os.path.exists(path):
+                try:
+                    return tk.PhotoImage(file=path)
+                except Exception:
+                    continue
+        return None
 
     def _centre_window(self):
         w = self.root.winfo_width()
