@@ -504,22 +504,51 @@ class LauncherApp:
         t.start()
 
     def _do_check_updates(self):
+        import json as _json
+
+        REPO_API = "https://api.github.com/repos/jasonanddanem-sketch/FFXINEWHOPE"
+
         try:
-            # Fetch remote version
-            url = f"{REPO_RAW}/version.txt"
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                remote_version = resp.read().decode("utf-8").strip()
+            # Fetch latest release from GitHub Releases API
+            self._set_status("Checking for updates...")
+            req = urllib.request.Request(
+                f"{REPO_API}/releases/latest",
+                headers={"Accept": "application/vnd.github.v3+json",
+                         "User-Agent": "NewHopeLauncher"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                release = _json.loads(resp.read().decode("utf-8"))
+
+            remote_version = release.get("tag_name", "").lstrip("v")
+            if not remote_version:
+                self._set_status("No releases found.")
+                return
 
             if remote_version == VERSION:
                 self._set_status(f"You're up to date! (v{VERSION})")
                 return
 
-            # New version available — ask user on the main thread
+            # Find the exe asset in the release
+            exe_url = None
+            for asset in release.get("assets", []):
+                if asset["name"].lower().endswith(".exe"):
+                    exe_url = asset["browser_download_url"]
+                    break
+
+            if not exe_url:
+                self._set_status("Update has no download file.")
+                return
+
+            # Ask user on the main thread
+            notes = release.get("body", "").strip()
             msg = (f"Update available!\n\n"
                    f"Current: v{VERSION}\n"
-                   f"New: v{remote_version}\n\n"
-                   f"Download and install the update?")
+                   f"New: v{remote_version}\n")
+            if notes:
+                # Truncate long release notes
+                if len(notes) > 300:
+                    notes = notes[:300] + "..."
+                msg += f"\n{notes}\n"
+            msg += "\nDownload and install the update?"
 
             result = [None]
             answered = threading.Event()
@@ -537,18 +566,31 @@ class LauncherApp:
 
             self._set_status("Downloading update...")
 
-            # Download new launcher exe
-            exe_url = f"{REPO_RAW}/dist/NewHope%20Launcher.exe"
+            # Download the exe from GitHub Releases (handles redirects properly)
             update_path = os.path.join(APP_DIR, "NewHope Launcher_update.exe")
+            dl_req = urllib.request.Request(
+                exe_url, headers={"User-Agent": "NewHopeLauncher"})
+            with urllib.request.urlopen(dl_req, timeout=120) as resp:
+                with open(update_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
 
-            urllib.request.urlretrieve(exe_url, update_path)
+            # Verify download is a real exe (PE header starts with MZ)
+            valid = False
+            if os.path.exists(update_path) and os.path.getsize(update_path) > 100000:
+                with open(update_path, "rb") as f:
+                    valid = f.read(2) == b"MZ"
 
-            if not os.path.exists(update_path) or os.path.getsize(update_path) < 100000:
+            if not valid:
                 if os.path.exists(update_path):
                     os.remove(update_path)
                 self._set_status("Download failed.")
                 self.root.after(0, lambda: messagebox.showerror(
-                    "Error", "Download failed — file too small or corrupted."))
+                    "Error",
+                    "Download failed — file is corrupted or not a valid exe."))
                 return
 
             # Write the updater batch script
@@ -577,11 +619,18 @@ class LauncherApp:
 
             self.root.after(500, self.root.destroy)
 
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self._set_status(f"You're up to date! (v{VERSION})")
+            else:
+                self._set_status("Update check failed.")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Update Error", f"HTTP {exc.code}: {exc.reason}"))
         except urllib.error.URLError as exc:
             self._set_status("Could not reach update server.")
             self.root.after(0, lambda: messagebox.showerror(
                 "Update Error",
-                f"Could not reach the update server.\n\n{exc}"))
+                f"Could not reach GitHub.\n\n{exc}"))
         except Exception as exc:
             self._set_status("Update check failed.")
             self.root.after(0, lambda: messagebox.showerror(
