@@ -1105,6 +1105,7 @@ ffxi = {ffxi_game_path}
             with urllib.request.urlopen(req, timeout=600) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
+                last_mb = -1
                 with open(zip_path, "wb") as f:
                     while True:
                         chunk = resp.read(131072)  # 128KB chunks
@@ -1112,11 +1113,16 @@ ffxi = {ffxi_game_path}
                             break
                         f.write(chunk)
                         downloaded += len(chunk)
-                        if total > 0:
-                            pct = int(downloaded * 100 / total)
-                            mb = downloaded // (1024 * 1024)
-                            self._set_status(
-                                f"Downloading HD Maps... {mb} MB ({pct}%)")
+                        mb = downloaded // (1024 * 1024)
+                        if mb != last_mb:
+                            last_mb = mb
+                            if total > 0:
+                                pct = int(downloaded * 100 / total)
+                                self._set_status(
+                                    f"Downloading HD Maps... {mb} MB ({pct}%)")
+                            else:
+                                self._set_status(
+                                    f"Downloading HD Maps... {mb} MB")
 
             self._set_status("Extracting HD Maps...")
 
