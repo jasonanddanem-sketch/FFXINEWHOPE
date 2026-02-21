@@ -3,7 +3,6 @@ __pycache__/
 *.spec
 *.pyc
 installer_output/
-dist/config.json
 dist/*.old.exe
 
 # Ashita user-generated data
