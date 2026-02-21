@@ -329,7 +329,9 @@ class LauncherApp:
         self._button(frame, "Create Account", self._create_account,
                      colour=BLUE_BTN, width=30).pack(pady=(0, 6))
         self._button(frame, "Check for Updates", self._check_updates,
-                     colour=ORANGE, width=30).pack(pady=(0, 10))
+                     colour=ORANGE, width=30).pack(pady=(0, 6))
+        self._button(frame, "Download HD Maps", self._download_hd_maps,
+                     colour=BG_LIGHT, width=30).pack(pady=(0, 10))
 
         # Status
         self._status_var = tk.StringVar(value="Ready")
@@ -346,8 +348,6 @@ class LauncherApp:
         self._button(bot, "Settings", self._show_setup,
                      colour=BG_LIGHT, width=8).pack(side="right")
         self._button(bot, "Addons", self._show_addons,
-                     colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
-        self._button(bot, "HD Maps", self._download_hd_maps,
                      colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
 
         # Enter key to login
