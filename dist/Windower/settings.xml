@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings>
+  <launcher>
+    <branch>stable</branch>
+  </launcher>
+  <autoload>
+    <addon>AnnounceTarget</addon>
+    <addon>azureSets</addon>
+    <addon>Clock</addon>
+    <addon>distance</addon>
+    <addon>DistancePlus</addon>
+    <addon>equipviewer</addon>
+    <addon>findAll</addon>
+    <addon>GearSwap</addon>
+    <addon>giltracker</addon>
+    <addon>instaLS</addon>
+    <addon>PetTP</addon>
+    <addon>timestamp</addon>
+    <addon>TParty</addon>
+    <addon>Treasury</addon>
+    <addon>Trusts</addon>
+    <addon>update</addon>
+    <plugin>DelayMeNot</plugin>
+    <plugin>FFXIDB</plugin>
+    <plugin>Timers</plugin>
+    <plugin>WeatherMon</plugin>
+  </autoload>
+  <profile name="">
+    <consolekey>Insert</consolekey>
+    <mipmaplevel>6</mipmaplevel>
+    <uiscale>1</uiscale>
+  </profile>
+</settings>

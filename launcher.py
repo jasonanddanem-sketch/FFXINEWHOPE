@@ -89,12 +89,14 @@ class LauncherApp:
 
         self.config = self._load_config()
 
-        # Auto-detect bundled Windower next to the launcher
+        # Auto-detect bundled Windower next to the launcher (or parent dir)
         if not self.config.get("windower_path"):
-            bundled = os.path.join(APP_DIR, "Windower", "Windower.exe")
-            if os.path.exists(bundled):
-                self.config["windower_path"] = bundled
-                self._save_config()
+            for base in (APP_DIR, os.path.dirname(APP_DIR)):
+                bundled = os.path.join(base, "Windower", "Windower.exe")
+                if os.path.exists(bundled):
+                    self.config["windower_path"] = bundled
+                    self._save_config()
+                    break
 
         # Track freshly downloaded addons (auto-checked when dialog reopens)
         self._newly_downloaded: set[str] = set()
