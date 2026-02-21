@@ -1,6 +1,6 @@
 """
 New Hope - FFXI Launcher
-Connects to a LandSandBoat private server via xiloader.
+Connects to a LandSandBoat private server via Ashita.
 """
 
 import tkinter as tk
@@ -11,12 +11,11 @@ import subprocess
 import threading
 import sys
 import urllib.request
-import tempfile
 
 # ---------------------------------------------------------------------------
 # Version & Repo
 # ---------------------------------------------------------------------------
-VERSION = "1.6"
+VERSION = "2.0"
 REPO_RAW = "https://raw.githubusercontent.com/jasonanddanem-sketch/FFXINEWHOPE/main"
 
 # ---------------------------------------------------------------------------
@@ -47,32 +46,24 @@ RED_BTN   = "#c62828"
 ORANGE    = "#e67e22"
 
 # ---------------------------------------------------------------------------
-# Official Windower addons (from github.com/Windower/Lua)
+# Ashita addon download (custom GitHub repos)
 # ---------------------------------------------------------------------------
-GITHUB_ADDON_API = "https://api.github.com/repos/Windower/Lua/contents/addons"
-GITHUB_GSUI_API  = "https://api.github.com/repos/jasonanddanem-sketch/GSUI/contents"
+GITHUB_GSUI_API = "https://api.github.com/repos/jasonanddanem-sketch/GSUI/contents"
 
-WINDOWER_ADDONS = [
-    "AnnounceTarget", "AutoControl", "AutoJoin", "AutoRA", "AutoReply",
-    "AutoRoll", "AzureSets", "BattleMod", "BattleStations", "Blist",
-    "BlockList", "BluGuide", "BoxDestroyer", "Cancel", "Capes",
-    "CapeTracker", "Chars", "ChatLink", "ChatPorter", "Clock",
-    "Clue", "ConsoleBG", "CraftMon", "DamageMeter", "DanceMon",
-    "DebuffNotify", "Distance", "DistancePlus", "DressUp", "DynamisHelper",
-    "EasyFarm", "EnemyBar", "EquipViewer", "Eval", "FastCS",
-    "FindAll", "FishBuddy", "Folio", "GameTime", "GearInfo",
-    "GearSwap", "GilTracker", "GSUI", "HealBot", "HideConsole", "InfoBar",
-    "InstaLS", "IPC", "ItemCollector", "JobChange", "Jump",
-    "KeyItems", "Linker", "Logger", "MacroChanger", "Mappy",
-    "MeritPointCalc", "MobTracker", "NamePlates", "OBI", "Organizer",
-    "PetSchool", "PetTP", "PointWatch", "Porter", "Pouches",
-    "Respond", "Reive", "RollTracker", "Runic", "Scoreboard",
-    "Sell", "SetBGM", "Shortcuts", "SilverLibs", "Songs",
-    "Sparks", "SpellCheck", "StatusTimer", "TFour", "Texts",
-    "Timers", "Timestamp", "TParty", "Treasury", "TreasurePool",
-    "Trusts", "Update", "VanaTunes", "VisibleFavor", "WAR",
-    "WatchDog", "Weather", "WS", "XIPivot", "Yush",
-]
+# Plugins that are always loaded (essential for Ashita operation)
+ESSENTIAL_PLUGINS = {"Addons", "Thirdparty"}
+
+# Default selections for first-time users
+DEFAULT_PLUGINS = {"Addons", "Thirdparty", "Screenshot", "Minimap"}
+DEFAULT_ADDONS = {
+    "hideconsole", "distance", "fps", "move", "timestamp", "tparty",
+}
+
+# Addons available for download from GitHub (not bundled)
+DOWNLOADABLE_ADDONS = {
+    "GSUI": GITHUB_GSUI_API,
+}
+
 
 # ===================================================================
 # Main Application
@@ -89,12 +80,12 @@ class LauncherApp:
 
         self.config = self._load_config()
 
-        # Auto-detect bundled Windower next to the launcher (or parent dir)
-        if not self.config.get("windower_path"):
+        # Auto-detect bundled Ashita next to the launcher (or parent dir)
+        if not self.config.get("ashita_path"):
             for base in (APP_DIR, os.path.dirname(APP_DIR)):
-                bundled = os.path.join(base, "Windower", "Windower.exe")
+                bundled = os.path.join(base, "Ashita", "Ashita-cli.exe")
                 if os.path.exists(bundled):
-                    self.config["windower_path"] = bundled
+                    self.config["ashita_path"] = bundled
                     self._save_config()
                     break
 
@@ -224,7 +215,8 @@ class LauncherApp:
                      colour=BG_LIGHT, width=8).pack(side="right", padx=(6, 0))
 
         self._label(frame,
-                    "e.g.  C:\\Program Files (x86)\\PlayOnline\\SquareEnix\\FINAL FANTASY XI",
+                    r"e.g.  D:\FFXI\SquareEnix  (folder containing "
+                    "PlayOnline & FINAL FANTASY XI)",
                     size=8, colour=FG_DIM).pack(anchor="w", pady=(0, 6))
 
         # --- Server IP ---
@@ -402,89 +394,83 @@ class LauncherApp:
 
         self._save_config()
 
-        # Find xiloader
-        xiloader = os.path.join(APP_DIR, "xiloader.exe")
-        if not os.path.exists(xiloader):
+        # Check for Ashita
+        ashita_path = self.config.get("ashita_path", "")
+        if not ashita_path or not os.path.exists(ashita_path):
             messagebox.showerror(
-                "xiloader.exe Not Found",
-                f"Place xiloader.exe in the launcher folder:\n\n{APP_DIR}")
+                "Ashita Not Found",
+                "Could not find Ashita-cli.exe.\n\n"
+                "Make sure the Ashita folder is next to the launcher.")
             return
 
         server_ip = self.config.get("server_ip", "127.0.0.1")
-        windower_path = self.config.get("windower_path", "")
-        use_windower = bool(windower_path)
 
-        action = "Creating account..." if create_account else "Logging in..."
-        self._status_var.set(action)
+        if create_account:
+            # For account creation, use xiloader if present
+            xiloader = os.path.join(APP_DIR, "xiloader.exe")
+            if not os.path.exists(xiloader):
+                messagebox.showerror(
+                    "xiloader.exe Not Found",
+                    "Account creation requires xiloader.exe.\n"
+                    f"Place it in:\n{APP_DIR}")
+                return
+            self._status_var.set("Creating account...")
+            t = threading.Thread(
+                target=self._do_create_account,
+                args=(xiloader, server_ip, username, password),
+                daemon=True)
+            t.start()
+        else:
+            self._status_var.set("Launching game...")
+            t = threading.Thread(
+                target=self._do_launch_ashita,
+                args=(ashita_path, server_ip, username, password),
+                daemon=True)
+            t.start()
 
-        t = threading.Thread(target=self._do_launch,
-                             args=(xiloader, server_ip,
-                                   username, password,
-                                   use_windower, windower_path),
-                             daemon=True)
-        t.start()
-
-    def _do_launch(self, xiloader: str, server_ip: str,
-                   username: str, password: str,
-                   use_windower: bool, windower_path: str):
+    def _do_create_account(self, xiloader: str, server_ip: str,
+                           username: str, password: str):
+        """Create an account via xiloader, then launch Ashita."""
         try:
             ffxi_path = self.config.get("ffxi_path", "")
+            cmd = [
+                xiloader,
+                "--server", server_ip,
+                "--user", username,
+                "--pass", password,
+            ]
+            self._set_status("Creating account...")
+            subprocess.Popen(
+                cmd,
+                cwd=ffxi_path if ffxi_path else APP_DIR,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            self._set_status("Account creation started! Close xiloader when done.")
+        except Exception as exc:
+            self._set_status("Error")
+            self.root.after(0, lambda: messagebox.showerror("Error", str(exc)))
 
-            if use_windower and windower_path and os.path.exists(windower_path):
-                windower_dir = os.path.dirname(windower_path)
+    def _do_launch_ashita(self, ashita_path: str, server_ip: str,
+                          username: str, password: str):
+        """Generate Ashita boot config and launch the game."""
+        try:
+            ashita_dir = os.path.dirname(ashita_path)
+            ffxi_path = self.config.get("ffxi_path", "")
 
-                # Copy xiloader.exe into the Windower folder so it can
-                # be found reliably regardless of launcher install path
-                import shutil
-                dest_xiloader = os.path.join(windower_dir, "xiloader.exe")
-                try:
-                    shutil.copy2(xiloader, dest_xiloader)
-                except Exception as exc:
-                    self._set_status("Could not copy xiloader.")
-                    self.root.after(0, lambda e=exc: messagebox.showerror(
-                        "Error",
-                        f"Could not copy xiloader.exe to Windower folder:\n"
-                        f"{exc}"))
-                    return
+            # Generate the boot .ini
+            self._set_status("Writing Ashita config...")
+            ini_path = os.path.join(ashita_dir, "config", "boot", "newhope.ini")
+            os.makedirs(os.path.dirname(ini_path), exist_ok=True)
+            self._write_boot_ini(ini_path, server_ip, username, password,
+                                 ffxi_path)
 
-                # Write a "NewHope" profile into Windower's settings.xml
-                # so Windower launches the game through xiloader with the
-                # correct server / credentials.
-                self._set_status("Configuring Windower...")
-                ok = self._update_windower_profile(
-                    windower_dir, server_ip, username, password)
-                if not ok:
-                    self._set_status("Failed to update Windower settings.")
-                    self.root.after(0, lambda: messagebox.showerror(
-                        "Windower Error",
-                        "Could not write to Windower's settings.xml.\n\n"
-                        "Make sure the Windower folder is not read-only."))
-                    return
-
-                # Launch Windower with -p to auto-start the profile
-                # (skips the interactive UI and launches the game directly)
-                self._set_status("Starting Windower...")
-                subprocess.Popen(
-                    [windower_path, "-p", "NewHope"],
-                    cwd=windower_dir,
-                )
-                self._set_status("Game launched with Windower!")
-            else:
-                # No Windower — launch xiloader directly
-                cmd = [
-                    xiloader,
-                    "--server", server_ip,
-                    "--username", username,
-                    "--password", password,
-                    "--hide",
-                ]
-                self._set_status("Authenticating...")
-                subprocess.Popen(
-                    cmd,
-                    cwd=ffxi_path,
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
-                self._set_status("Game launched!")
+            # Launch Ashita-cli.exe with the config
+            self._set_status("Starting Ashita...")
+            subprocess.Popen(
+                [ashita_path, "newhope.ini"],
+                cwd=ashita_dir,
+            )
+            self._set_status("Game launched with Ashita!")
 
         except Exception as exc:
             self._set_status("Error")
@@ -492,88 +478,567 @@ class LauncherApp:
                 "Error", str(exc)))
 
     # ------------------------------------------------------------------
-    # Windower profile helper
+    # Ashita boot .ini generation
     # ------------------------------------------------------------------
-    def _update_windower_profile(self, windower_dir: str,
-                                 server_ip: str,
-                                 username: str, password: str) -> bool:
-        """Add / update a 'NewHope' profile in Windower's settings.xml
-        that uses xiloader.exe as the executable with server args."""
-        import xml.etree.ElementTree as ET
+    def _write_boot_ini(self, ini_path: str, server_ip: str,
+                        username: str, password: str, ffxi_path: str):
+        """Write the Ashita boot configuration file."""
 
-        settings_path = os.path.join(windower_dir, "settings.xml")
-        if not os.path.exists(settings_path):
-            return False
+        # Detect FFXI subdirectory paths for sandbox
+        pol_path, ffxi_game_path = self._detect_ffxi_paths(ffxi_path)
 
-        try:
-            tree = ET.parse(settings_path)
-            root = tree.getroot()
+        # Read the current startup script to see if user has customized it
+        ashita_dir = os.path.dirname(os.path.dirname(os.path.dirname(ini_path)))
+        script_path = os.path.join(ashita_dir, "scripts", "newhope_addons.txt")
+        script_name = "newhope_addons.txt"
 
-            # Find or create the NewHope profile
-            profile = None
-            for p in root.findall("profile"):
-                if p.get("name") == "NewHope":
-                    profile = p
-                    break
+        # If the startup script doesn't exist yet, create default one
+        if not os.path.exists(script_path):
+            self._write_default_script(ashita_dir)
 
-            if profile is None:
-                profile = ET.SubElement(root, "profile")
-                profile.set("name", "NewHope")
-                # Copy useful display settings from the default profile
-                default = root.find("profile[@name='']")
-                if default is not None:
-                    for child in default:
-                        if child.tag not in ("executable", "args"):
-                            copy = ET.SubElement(profile, child.tag)
-                            copy.text = child.text
+        # Escape password for the command line (wrap in quotes if needed)
+        safe_pass = password.replace('"', '\\"')
 
-            # Helper to set a child element's text
-            def _set(tag, text):
-                el = profile.find(tag)
-                if el is None:
-                    el = ET.SubElement(profile, tag)
-                el.text = text
+        ini_content = f"""; New Hope - Ashita v4 Boot Configuration
+; Auto-generated by New Hope Launcher v{VERSION}
 
-            # xiloader.exe was already copied into the Windower folder
-            _set("executable", "xiloader.exe")
-            _set("args", (f"--server {server_ip} "
-                          f"--user {username} "
-                          f"--pass {password}"))
+[ashita.launcher]
+autoclose = 1
+name = NewHope
 
-            tree.write(settings_path, encoding="utf-8",
-                       xml_declaration=True)
-            return True
-        except Exception:
-            return False
+[ashita.boot]
+file = .\\bootloader\\pol.exe
+command = --server {server_ip} --user {username} --password "{safe_pass}"
+gamemodule = ffximain.dll
+script = {script_name}
+args =
+
+[ashita.language]
+playonline = 0
+ashita = 0
+
+[ashita.logging]
+level = 0
+crashdumps = 1
+
+[ashita.taskpool]
+threadcount = -1
+
+[ashita.resources]
+offsets.use_overrides = 1
+pointers.use_overrides = 1
+resources.use_overrides = 1
+
+[ashita.window.startpos]
+x = -1
+y = -1
+
+[ashita.input]
+gamepad.allowbackground = 0
+gamepad.disableenumeration = 0
+keyboard.blockinput = 0
+keyboard.blockbindsduringinput = 0
+keyboard.silentbinds = 0
+keyboard.windowskeyenabled = 1
+mouse.blockinput = 0
+mouse.unhook = 1
+
+[ashita.misc]
+addons.silent = 0
+aliases.silent = 0
+plugins.silent = 0
+
+[ashita.polplugins]
+sandbox = 1
+pivot = 1
+
+[ashita.polplugins.args]
+
+[ffxi.direct3d8]
+presentparams.backbufferformat = -1
+presentparams.backbuffercount = -1
+presentparams.multisampletype = -1
+presentparams.swapeffect = -1
+presentparams.enableautodepthstencil = -1
+presentparams.autodepthstencilformat = -1
+presentparams.flags = -1
+presentparams.fullscreen_refreshrateinhz = -1
+presentparams.fullscreen_presentationinterval = -1
+behaviorflags.fpu_preserve = 0
+
+[ffxi.registry]
+0000 = 6
+0001 = 1920
+0002 = 1080
+0003 = 2048
+0004 = 2048
+0007 = 1
+0011 = 2
+0017 = 0
+0018 = 2
+0019 = 2
+0021 = 1
+0022 = 0
+0028 = 0
+0029 = 12
+0034 = 3
+0035 = 1
+0036 = 0
+0037 = 1920
+0038 = 1080
+0039 = 1
+0040 = 0
+0041 = 1
+0043 = 1
+0044 = 1
+
+[sandbox.paths]
+common = C:\\Program Files (x86)\\Common Files
+pol = {pol_path}
+ffxi = {ffxi_game_path}
+"""
+        with open(ini_path, "w", encoding="utf-8") as f:
+            f.write(ini_content)
+
+    @staticmethod
+    def _detect_ffxi_paths(ffxi_base: str) -> tuple[str, str]:
+        """Auto-detect PlayOnline and FFXI game directories."""
+        pol_path = ""
+        ffxi_path = ""
+
+        if not ffxi_base or not os.path.isdir(ffxi_base):
+            return pol_path, ffxi_path
+
+        for name in os.listdir(ffxi_base):
+            full = os.path.join(ffxi_base, name)
+            if not os.path.isdir(full):
+                continue
+            low = name.lower()
+            if "playonline" in low:
+                pol_path = full
+            elif "final fantasy" in low or "ffxi" in low:
+                ffxi_path = full
+
+        return pol_path, ffxi_path
 
     # ------------------------------------------------------------------
-    # FFXI registry helpers
+    # Ashita startup script generation
+    # ------------------------------------------------------------------
+    def _write_default_script(self, ashita_dir: str):
+        """Write the default newhope_addons.txt startup script."""
+        script_path = os.path.join(ashita_dir, "scripts", "newhope_addons.txt")
+        os.makedirs(os.path.dirname(script_path), exist_ok=True)
+
+        lines = [
+            "##########################################################################",
+            "# New Hope - Ashita Startup Script",
+            f"# Auto-generated by New Hope Launcher v{VERSION}",
+            "#",
+            "# This file is managed by the launcher's Addons picker.",
+            "# Manual edits will be overwritten when you save in the Addons dialog.",
+            "##########################################################################",
+            "",
+            "# Load Plugins",
+        ]
+
+        for plugin in sorted(DEFAULT_PLUGINS, key=str.lower):
+            lines.append(f"/load {plugin.lower()}")
+
+        lines.append("")
+        lines.append("# Load Addons")
+
+        for addon in sorted(DEFAULT_ADDONS, key=str.lower):
+            lines.append(f"/addon load {addon}")
+
+        lines.append("")
+        lines.append("##########################################################################")
+        lines.append("# Keybinds")
+        lines.append("##########################################################################")
+        lines.append("")
+        lines.append("/bind insert /ashita")
+        lines.append("/bind SYSRQ /screenshot hide")
+        lines.append("/bind ^v /paste")
+        lines.append("/bind F11 /ambient")
+        lines.append("/bind F12 /fps")
+
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+    # ------------------------------------------------------------------
+    # Parse / write startup script for addon picker
     # ------------------------------------------------------------------
     @staticmethod
-    def _set_ffxi_windowed(windowed: bool):
-        """Set FFXI windowed/fullscreen mode in the Windows registry."""
+    def _read_script(script_path: str) -> tuple[set, set]:
+        """Parse the startup script and return (enabled_addons, enabled_plugins)."""
+        addons: set[str] = set()
+        plugins: set[str] = set()
+
+        if not os.path.exists(script_path):
+            return addons, plugins
+
         try:
-            import winreg
-            key_path = r"SOFTWARE\PlayOnlineUS\SquareEnix\FinalFantasyXI"
-            # Try both 32-bit and 64-bit registry views
-            for access in [winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY]:
-                try:
-                    key = winreg.OpenKey(
-                        winreg.HKEY_LOCAL_MACHINE, key_path,
-                        0, winreg.KEY_SET_VALUE | access)
-                    # 0003=0 for windowed, 0003=nonzero for fullscreen
-                    winreg.SetValueEx(key, "0003", 0, winreg.REG_DWORD,
-                                      0 if windowed else 1)
-                    # 0037 = windowed mode flag (some FFXI versions)
-                    winreg.SetValueEx(key, "0037", 0, winreg.REG_DWORD,
-                                      1 if windowed else 0)
-                    winreg.CloseKey(key)
-                except FileNotFoundError:
-                    continue
-                except PermissionError:
-                    continue
+            with open(script_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("/addon load "):
+                        name = line[len("/addon load "):].strip()
+                        if name:
+                            addons.add(name)
+                    elif line.startswith("/load "):
+                        name = line[len("/load "):].strip()
+                        if name:
+                            plugins.add(name)
         except Exception:
-            pass  # Non-critical, game may still work
+            pass
+
+        return addons, plugins
+
+    @staticmethod
+    def _write_script(script_path: str, addon_vars: dict, plugin_vars: dict):
+        """Write the startup script from the addon/plugin picker state."""
+        os.makedirs(os.path.dirname(script_path), exist_ok=True)
+
+        lines = [
+            "##########################################################################",
+            "# New Hope - Ashita Startup Script",
+            "# Managed by the launcher's Addons picker.",
+            "##########################################################################",
+            "",
+            "# Load Plugins",
+        ]
+
+        for name in sorted(plugin_vars.keys(), key=str.lower):
+            if plugin_vars[name].get():
+                lines.append(f"/load {name.lower()}")
+
+        lines.append("")
+        lines.append("# Load Addons")
+
+        for name in sorted(addon_vars.keys(), key=str.lower):
+            if addon_vars[name].get():
+                lines.append(f"/addon load {name}")
+
+        lines.append("")
+        lines.append("##########################################################################")
+        lines.append("# Keybinds")
+        lines.append("##########################################################################")
+        lines.append("")
+        lines.append("/bind insert /ashita")
+        lines.append("/bind SYSRQ /screenshot hide")
+        lines.append("/bind ^v /paste")
+        lines.append("/bind F11 /ambient")
+        lines.append("/bind F12 /fps")
+
+        # Post-load config (wait for addons to initialize)
+        lines.append("")
+        lines.append("/wait 3")
+        lines.append("/ambient 255 255 255 255")
+
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+    # ------------------------------------------------------------------
+    # Scan Ashita addons & plugins
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _scan_addons(ashita_dir: str) -> list[str]:
+        """Return sorted list of addon names found in Ashita's addons/ dir."""
+        addons_dir = os.path.join(ashita_dir, "addons")
+        if not os.path.isdir(addons_dir):
+            return []
+        skip = {"libs"}
+        addons = []
+        for name in os.listdir(addons_dir):
+            if os.path.isdir(os.path.join(addons_dir, name)):
+                if name.lower() not in skip:
+                    addons.append(name)
+        return sorted(addons, key=str.lower)
+
+    @staticmethod
+    def _scan_plugins(ashita_dir: str) -> list[str]:
+        """Return sorted list of plugin names (no .dll) from plugins/ dir."""
+        plugins_dir = os.path.join(ashita_dir, "plugins")
+        if not os.path.isdir(plugins_dir):
+            return []
+        skip = {"sdk"}
+        plugins = []
+        for name in os.listdir(plugins_dir):
+            full = os.path.join(plugins_dir, name)
+            if name.lower().endswith(".dll") and os.path.isfile(full):
+                plugins.append(name[:-4])  # strip .dll
+        return sorted(plugins, key=str.lower)
+
+    # ------------------------------------------------------------------
+    # Addon download helpers
+    # ------------------------------------------------------------------
+    def _fetch_github_dir(self, api_url: str, local_dir: str,
+                          status_cb) -> None:
+        """Recursively download a GitHub directory via the Contents API."""
+        import json as _json
+
+        req = urllib.request.Request(
+            api_url,
+            headers={"Accept": "application/vnd.github.v3+json",
+                     "User-Agent": "NewHopeLauncher"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            entries = _json.loads(resp.read().decode("utf-8"))
+
+        os.makedirs(local_dir, exist_ok=True)
+        for entry in entries:
+            name = entry["name"]
+            if entry["type"] == "dir":
+                self._fetch_github_dir(entry["url"],
+                                       os.path.join(local_dir, name),
+                                       status_cb)
+            elif entry["type"] == "file" and entry.get("download_url"):
+                status_cb(f"Downloading {name}...")
+                dl_req = urllib.request.Request(
+                    entry["download_url"],
+                    headers={"User-Agent": "NewHopeLauncher"})
+                with urllib.request.urlopen(dl_req, timeout=30) as dl_resp:
+                    data = dl_resp.read()
+                with open(os.path.join(local_dir, name), "wb") as f:
+                    f.write(data)
+
+    def _download_addon(self, addon_name: str, ashita_dir: str,
+                        status_cb, done_cb) -> None:
+        """Download an addon from GitHub (runs on a background thread)."""
+        import shutil
+
+        addons_dir = os.path.join(ashita_dir, "addons")
+        temp_dir = os.path.join(addons_dir, f"{addon_name}_downloading")
+        final_dir = os.path.join(addons_dir, addon_name)
+
+        try:
+            api_url = DOWNLOADABLE_ADDONS.get(addon_name)
+            if not api_url:
+                raise RuntimeError(f"No download source for {addon_name}")
+
+            self._fetch_github_dir(api_url, temp_dir, status_cb)
+
+            # Verify we got lua files
+            has_lua = any(f.endswith(".lua")
+                         for f in os.listdir(temp_dir))
+            if not has_lua:
+                raise RuntimeError("No .lua files found — invalid addon.")
+
+            # Move to final location
+            if os.path.exists(final_dir):
+                shutil.rmtree(final_dir)
+            os.rename(temp_dir, final_dir)
+
+            self._newly_downloaded.add(addon_name)
+            done_cb(True, "")
+        except Exception as exc:
+            # Clean up temp dir on failure
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            done_cb(False, str(exc))
+        finally:
+            self._download_active = False
+
+    # ------------------------------------------------------------------
+    # Addon / Plugin dialog
+    # ------------------------------------------------------------------
+    def _show_addons(self):
+        """Open the Addons & Plugins picker dialog."""
+        ashita_path = self.config.get("ashita_path", "")
+        if not ashita_path:
+            messagebox.showinfo("Ashita Not Found",
+                                "Ashita was not detected.")
+            return
+        ashita_dir = os.path.dirname(ashita_path)
+        script_path = os.path.join(ashita_dir, "scripts", "newhope_addons.txt")
+
+        addons = self._scan_addons(ashita_dir)
+        plugins = self._scan_plugins(ashita_dir)
+        enabled_addons, enabled_plugins = self._read_script(script_path)
+
+        # If no script exists yet, use defaults
+        first_time = not os.path.exists(script_path)
+        if first_time:
+            enabled_addons = DEFAULT_ADDONS.copy()
+            enabled_plugins = {p.lower() for p in DEFAULT_PLUGINS}
+
+        # --- Build popup ---
+        popup = tk.Toplevel(self.root)
+        popup.title("Addons & Plugins")
+        popup.configure(bg=BG)
+        popup.geometry("400x600")
+        popup.resizable(False, True)
+        popup.transient(self.root)
+        popup.grab_set()
+
+        # Header
+        self._label(popup, "Ashita Addons & Plugins", size=13, bold=True,
+                    colour=GOLD).pack(pady=(12, 8))
+
+        # Scrollable area
+        container = tk.Frame(popup, bg=BG)
+        container.pack(fill="both", expand=True, padx=10)
+
+        canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(container, orient="vertical",
+                                 command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG)
+
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_id = canvas.create_window((0, 0), window=inner, anchor="n")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Keep inner frame centered when canvas resizes
+        def _center_inner(event):
+            canvas.itemconfigure(canvas_id, width=event.width)
+        canvas.bind("<Configure>", _center_inner)
+
+        # Mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_wheel(event=None):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_wheel(event=None):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
+
+        addon_vars: dict[str, tk.BooleanVar] = {}
+        plugin_vars: dict[str, tk.BooleanVar] = {}
+
+        # --- Plugins section (shown first since they're fewer) ---
+        self._label(inner, "Plugins", size=11, bold=True,
+                    colour=GOLD).pack(pady=(6, 0))
+        tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
+
+        if plugins:
+            for name in plugins:
+                checked = (name.lower() in {p.lower() for p in enabled_plugins}
+                           or name in ESSENTIAL_PLUGINS)
+                var = tk.BooleanVar(value=checked)
+                plugin_vars[name] = var
+
+                cb = tk.Checkbutton(
+                    inner, text=name, variable=var,
+                    bg=BG, fg=FG, selectcolor=BG_ENTRY,
+                    activebackground=BG, activeforeground=FG,
+                    font=("Segoe UI", 9), anchor="w")
+
+                # Essential plugins are always checked and disabled
+                if name in ESSENTIAL_PLUGINS:
+                    cb.configure(state="disabled",
+                                 disabledforeground=FG_DIM)
+                    var.set(True)
+
+                cb.pack(fill="x", padx=20)
+        else:
+            self._label(inner, "No plugins found.", size=9,
+                        colour=FG_DIM).pack(padx=20)
+
+        # --- Installed Addons section ---
+        self._label(inner, "Addons", size=11, bold=True,
+                    colour=GOLD).pack(pady=(12, 0))
+        tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
+
+        if addons:
+            for name in addons:
+                checked = (name in enabled_addons
+                           or name.lower() in {a.lower() for a in enabled_addons}
+                           or name in self._newly_downloaded)
+                var = tk.BooleanVar(value=checked)
+                addon_vars[name] = var
+                tk.Checkbutton(inner, text=name, variable=var,
+                               bg=BG, fg=FG, selectcolor=BG_ENTRY,
+                               activebackground=BG, activeforeground=FG,
+                               font=("Segoe UI", 9),
+                               anchor="w").pack(fill="x", padx=20)
+        else:
+            self._label(inner, "No addons found.", size=9,
+                        colour=FG_DIM).pack(padx=20)
+
+        # --- Available Addons (Download) section ---
+        installed_lower = {a.lower() for a in addons}
+        available = [name for name in DOWNLOADABLE_ADDONS
+                     if name.lower() not in installed_lower]
+
+        if available:
+            self._label(inner, "Available Addons (Download)", size=11,
+                        bold=True, colour=ORANGE).pack(pady=(12, 0))
+            tk.Frame(inner, bg=ORANGE, height=1).pack(fill="x", pady=(0, 4))
+
+            for addon_name in available:
+                row = tk.Frame(inner, bg=BG)
+                row.pack(fill="x", padx=20, pady=1)
+
+                self._label(row, addon_name, size=9).pack(
+                    side="left", anchor="w")
+
+                status_lbl = tk.Label(row, text="", font=("Segoe UI", 8),
+                                      fg=FG_DIM, bg=BG)
+                status_lbl.pack(side="right", padx=(4, 0))
+
+                dl_btn = tk.Button(
+                    row, text="Download", font=("Segoe UI", 8, "bold"),
+                    fg="white", bg=ORANGE, activebackground=ORANGE,
+                    activeforeground="white", relief="flat", bd=0,
+                    cursor="hand2", width=9)
+                dl_btn.pack(side="right")
+
+                def _start_download(name=addon_name, btn=dl_btn,
+                                    lbl=status_lbl):
+                    if self._download_active:
+                        return
+                    self._download_active = True
+                    btn.configure(state="disabled", text="...")
+
+                    def _status(msg, _lbl=lbl):
+                        self.root.after(0, lambda: _lbl.configure(text=msg))
+
+                    def _done(ok, err, _popup=popup):
+                        def _finish():
+                            if ok:
+                                # Reopen dialog so the addon appears
+                                # in the installed section
+                                _popup.destroy()
+                                self._show_addons()
+                            else:
+                                btn.configure(state="normal",
+                                              text="Download")
+                                lbl.configure(text=f"Error: {err[:30]}")
+                        self.root.after(0, _finish)
+
+                    t = threading.Thread(
+                        target=self._download_addon,
+                        args=(name, ashita_dir, _status, _done),
+                        daemon=True)
+                    t.start()
+
+                dl_btn.configure(command=_start_download)
+
+        # --- Buttons ---
+        btn_frame = tk.Frame(popup, bg=BG)
+        btn_frame.pack(fill="x", padx=10, pady=(8, 12))
+
+        def _save():
+            try:
+                self._write_script(script_path, addon_vars, plugin_vars)
+                self._newly_downloaded.clear()
+                popup.destroy()
+            except Exception as exc:
+                messagebox.showerror("Error",
+                                     f"Could not save startup script:\n{exc}")
+
+        self._button(btn_frame, "Save", _save,
+                     colour=GREEN_BTN, width=12).pack(side="left", expand=True)
+        self._button(btn_frame, "Cancel", popup.destroy,
+                     colour=BG_LIGHT, width=12).pack(side="left", expand=True)
+
+        popup.protocol("WM_DELETE_WINDOW", popup.destroy)
 
     # ------------------------------------------------------------------
     # Update logic
@@ -646,7 +1111,7 @@ class LauncherApp:
 
             self._set_status("Downloading update...")
 
-            # Download the exe from GitHub Releases (handles redirects properly)
+            # Download the exe from GitHub Releases
             update_path = os.path.join(APP_DIR, "NewHope Launcher_update.exe")
             dl_req = urllib.request.Request(
                 exe_url, headers={"User-Agent": "NewHopeLauncher"})
@@ -718,351 +1183,6 @@ class LauncherApp:
 
     def _set_status(self, text: str):
         self.root.after(0, lambda: self._status_var.set(text))
-
-    # ------------------------------------------------------------------
-    # Addon / Plugin picker
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _scan_addons(windower_dir: str) -> list[str]:
-        """Return sorted list of addon names found in Windower's addons/ dir."""
-        addons_dir = os.path.join(windower_dir, "addons")
-        if not os.path.isdir(addons_dir):
-            return []
-        skip = {"libs", "new folder", "equip viewer"}
-        addons = []
-        for name in os.listdir(addons_dir):
-            if os.path.isdir(os.path.join(addons_dir, name)):
-                if name.lower() not in skip:
-                    addons.append(name)
-        return sorted(addons, key=str.lower)
-
-    @staticmethod
-    def _scan_plugins(windower_dir: str) -> list[str]:
-        """Return sorted list of plugin names (no .dll) from plugins/ dir."""
-        plugins_dir = os.path.join(windower_dir, "plugins")
-        if not os.path.isdir(plugins_dir):
-            return []
-        skip = {"luacore.dll"}
-        plugins = []
-        for name in os.listdir(plugins_dir):
-            if name.lower().endswith(".dll") and name.lower() not in skip:
-                plugins.append(name[:-4])  # strip .dll
-        return sorted(plugins, key=str.lower)
-
-    @staticmethod
-    def _read_autoload(settings_path: str) -> tuple[set, set]:
-        """Parse settings.xml and return (enabled_addons, enabled_plugins)."""
-        import xml.etree.ElementTree as ET
-
-        addons: set[str] = set()
-        plugins: set[str] = set()
-        if not os.path.exists(settings_path):
-            return addons, plugins
-        try:
-            tree = ET.parse(settings_path)
-            autoload = tree.getroot().find("autoload")
-            if autoload is None:
-                return addons, plugins
-            for el in autoload.findall("addon"):
-                if el.text and el.text.strip():
-                    addons.add(el.text.strip())
-            for el in autoload.findall("plugin"):
-                if el.text and el.text.strip():
-                    plugins.add(el.text.strip())
-        except Exception:
-            pass
-        return addons, plugins
-
-    @staticmethod
-    def _save_autoload(settings_path: str, addon_vars: dict, plugin_vars: dict):
-        """Write checked addons/plugins into the <autoload> section."""
-        import xml.etree.ElementTree as ET
-
-        tree = ET.parse(settings_path)
-        root = tree.getroot()
-        autoload = root.find("autoload")
-        if autoload is None:
-            autoload = ET.SubElement(root, "autoload")
-
-        # Remove existing addon/plugin entries
-        for el in list(autoload):
-            if el.tag in ("addon", "plugin"):
-                autoload.remove(el)
-
-        # Write checked addons
-        for name, var in sorted(addon_vars.items(), key=lambda x: x[0].lower()):
-            if var.get():
-                child = ET.SubElement(autoload, "addon")
-                child.text = name
-
-        # Write checked plugins
-        for name, var in sorted(plugin_vars.items(), key=lambda x: x[0].lower()):
-            if var.get():
-                child = ET.SubElement(autoload, "plugin")
-                child.text = name
-
-        tree.write(settings_path, encoding="utf-8", xml_declaration=True)
-
-    # ------------------------------------------------------------------
-    # Addon download helpers
-    # ------------------------------------------------------------------
-    def _fetch_github_dir(self, api_url: str, local_dir: str,
-                          status_cb) -> None:
-        """Recursively download a GitHub directory via the Contents API."""
-        import json as _json
-
-        req = urllib.request.Request(
-            api_url,
-            headers={"Accept": "application/vnd.github.v3+json",
-                     "User-Agent": "NewHopeLauncher"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            entries = _json.loads(resp.read().decode("utf-8"))
-
-        os.makedirs(local_dir, exist_ok=True)
-        for entry in entries:
-            name = entry["name"]
-            if entry["type"] == "dir":
-                self._fetch_github_dir(entry["url"],
-                                       os.path.join(local_dir, name),
-                                       status_cb)
-            elif entry["type"] == "file" and entry.get("download_url"):
-                status_cb(f"Downloading {name}...")
-                dl_req = urllib.request.Request(
-                    entry["download_url"],
-                    headers={"User-Agent": "NewHopeLauncher"})
-                with urllib.request.urlopen(dl_req, timeout=30) as dl_resp:
-                    data = dl_resp.read()
-                with open(os.path.join(local_dir, name), "wb") as f:
-                    f.write(data)
-
-    def _download_addon(self, addon_name: str, windower_dir: str,
-                        status_cb, done_cb) -> None:
-        """Download an addon from GitHub (runs on a background thread)."""
-        import shutil
-
-        addons_dir = os.path.join(windower_dir, "addons")
-        temp_dir = os.path.join(addons_dir, f"{addon_name}_downloading")
-        final_dir = os.path.join(addons_dir, addon_name)
-
-        try:
-            if addon_name == "GSUI":
-                api_url = GITHUB_GSUI_API
-            else:
-                api_url = f"{GITHUB_ADDON_API}/{addon_name}"
-            self._fetch_github_dir(api_url, temp_dir, status_cb)
-
-            # Verify we got lua files
-            has_lua = any(f.endswith(".lua")
-                         for f in os.listdir(temp_dir))
-            if not has_lua:
-                raise RuntimeError("No .lua files found — invalid addon.")
-
-            # Move to final location
-            if os.path.exists(final_dir):
-                shutil.rmtree(final_dir)
-            os.rename(temp_dir, final_dir)
-
-            self._newly_downloaded.add(addon_name)
-            done_cb(True, "")
-        except Exception as exc:
-            # Clean up temp dir on failure
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            done_cb(False, str(exc))
-        finally:
-            self._download_active = False
-
-    # ------------------------------------------------------------------
-    # Addon / Plugin dialog
-    # ------------------------------------------------------------------
-    def _show_addons(self):
-        """Open the Addons & Plugins picker dialog."""
-        windower_path = self.config.get("windower_path", "")
-        if not windower_path:
-            messagebox.showinfo("Windower Not Found",
-                                "Windower was not detected.")
-            return
-        windower_dir = os.path.dirname(windower_path)
-        settings_path = os.path.join(windower_dir, "settings.xml")
-
-        if not os.path.exists(settings_path):
-            messagebox.showerror(
-                "Settings Not Found",
-                f"Could not find settings.xml in:\n{windower_dir}\n\n"
-                "Launch Windower once first to generate it.")
-            return
-
-        addons = self._scan_addons(windower_dir)
-        plugins = self._scan_plugins(windower_dir)
-        enabled_addons, enabled_plugins = self._read_autoload(settings_path)
-
-        # --- Build popup ---
-        popup = tk.Toplevel(self.root)
-        popup.title("Addons & Plugins")
-        popup.configure(bg=BG)
-        popup.geometry("380x560")
-        popup.resizable(False, True)
-        popup.transient(self.root)
-        popup.grab_set()
-
-        # Header
-        self._label(popup, "Windower Addons & Plugins", size=13, bold=True,
-                    colour=GOLD).pack(pady=(12, 8))
-
-        # Scrollable area
-        container = tk.Frame(popup, bg=BG)
-        container.pack(fill="both", expand=True, padx=10)
-
-        canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
-        scrollbar = tk.Scrollbar(container, orient="vertical",
-                                 command=canvas.yview)
-        inner = tk.Frame(canvas, bg=BG)
-
-        inner.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas_id = canvas.create_window((0, 0), window=inner, anchor="n")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        # Keep inner frame centered when canvas resizes
-        def _center_inner(event):
-            canvas.itemconfigure(canvas_id, width=event.width)
-        canvas.bind("<Configure>", _center_inner)
-
-        # Mousewheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        def _bind_wheel(event=None):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        def _unbind_wheel(event=None):
-            canvas.unbind_all("<MouseWheel>")
-
-        canvas.bind("<Enter>", _bind_wheel)
-        canvas.bind("<Leave>", _unbind_wheel)
-
-        addon_vars: dict[str, tk.BooleanVar] = {}
-        plugin_vars: dict[str, tk.BooleanVar] = {}
-
-        # --- Installed Addons section ---
-        self._label(inner, "Installed Addons", size=11, bold=True,
-                    colour=GOLD).pack(pady=(6, 0))
-        tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
-
-        if addons:
-            for name in addons:
-                checked = (name in enabled_addons
-                           or name in self._newly_downloaded)
-                var = tk.BooleanVar(value=checked)
-                addon_vars[name] = var
-                tk.Checkbutton(inner, text=name, variable=var,
-                               bg=BG, fg=FG, selectcolor=BG_ENTRY,
-                               activebackground=BG, activeforeground=FG,
-                               font=("Segoe UI", 9),
-                               anchor="w").pack(fill="x", padx=20)
-        else:
-            self._label(inner, "No addons found.", size=9,
-                        colour=FG_DIM).pack(padx=20)
-
-        # --- Plugins section ---
-        self._label(inner, "Plugins", size=11, bold=True,
-                    colour=GOLD).pack(pady=(12, 0))
-        tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
-
-        if plugins:
-            for name in plugins:
-                var = tk.BooleanVar(value=(name in enabled_plugins))
-                plugin_vars[name] = var
-                tk.Checkbutton(inner, text=name, variable=var,
-                               bg=BG, fg=FG, selectcolor=BG_ENTRY,
-                               activebackground=BG, activeforeground=FG,
-                               font=("Segoe UI", 9),
-                               anchor="w").pack(fill="x", padx=20)
-        else:
-            self._label(inner, "No plugins found.", size=9,
-                        colour=FG_DIM).pack(padx=20)
-
-        # --- Available Addons (Download) section ---
-        installed_lower = {a.lower() for a in addons}
-        available = [a for a in WINDOWER_ADDONS
-                     if a.lower() not in installed_lower]
-
-        if available:
-            self._label(inner, "Available Addons (Download)", size=11,
-                        bold=True, colour=ORANGE).pack(pady=(12, 0))
-            tk.Frame(inner, bg=ORANGE, height=1).pack(fill="x", pady=(0, 4))
-
-            for addon_name in available:
-                row = tk.Frame(inner, bg=BG)
-                row.pack(fill="x", padx=20, pady=1)
-
-                self._label(row, addon_name, size=9).pack(
-                    side="left", anchor="w")
-
-                status_lbl = tk.Label(row, text="", font=("Segoe UI", 8),
-                                      fg=FG_DIM, bg=BG)
-                status_lbl.pack(side="right", padx=(4, 0))
-
-                dl_btn = tk.Button(
-                    row, text="Download", font=("Segoe UI", 8, "bold"),
-                    fg="white", bg=ORANGE, activebackground=ORANGE,
-                    activeforeground="white", relief="flat", bd=0,
-                    cursor="hand2", width=9)
-                dl_btn.pack(side="right")
-
-                def _start_download(name=addon_name, btn=dl_btn,
-                                    lbl=status_lbl):
-                    if self._download_active:
-                        return
-                    self._download_active = True
-                    btn.configure(state="disabled", text="...")
-
-                    def _status(msg, _lbl=lbl):
-                        self.root.after(0, lambda: _lbl.configure(text=msg))
-
-                    def _done(ok, err, _popup=popup):
-                        def _finish():
-                            if ok:
-                                # Reopen dialog so the addon appears
-                                # in the installed section
-                                _popup.destroy()
-                                self._show_addons()
-                            else:
-                                btn.configure(state="normal",
-                                              text="Download")
-                                lbl.configure(text=f"Error: {err[:30]}")
-                        self.root.after(0, _finish)
-
-                    t = threading.Thread(
-                        target=self._download_addon,
-                        args=(name, windower_dir, _status, _done),
-                        daemon=True)
-                    t.start()
-
-                dl_btn.configure(command=_start_download)
-
-        # --- Buttons ---
-        btn_frame = tk.Frame(popup, bg=BG)
-        btn_frame.pack(fill="x", padx=10, pady=(8, 12))
-
-        def _save():
-            try:
-                self._save_autoload(settings_path, addon_vars, plugin_vars)
-                self._newly_downloaded.clear()
-                popup.destroy()
-            except Exception as exc:
-                messagebox.showerror("Error",
-                                     f"Could not save settings.xml:\n{exc}")
-
-        self._button(btn_frame, "Save", _save,
-                     colour=GREEN_BTN, width=12).pack(side="left", expand=True)
-        self._button(btn_frame, "Cancel", popup.destroy,
-                     colour=BG_LIGHT, width=12).pack(side="left", expand=True)
-
-        popup.protocol("WM_DELETE_WINDOW", popup.destroy)
 
 
 # ===================================================================

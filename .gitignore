@@ -6,10 +6,19 @@ installer_output/
 dist/config.json
 dist/*.old.exe
 
-# Windower user-generated data
-Windower/screenshots/
-Windower/console.log
-Windower/crash.log
-Windower/addons/*/data/
-Windower/plugins/settings/*.xml
-Windower/scripts/autoload/
+# Ashita user-generated data
+Ashita/config/boot/newhope.ini
+Ashita/config/addons/
+Ashita/config/plugins/
+Ashita/config/launcher/
+Ashita/config/legacyac/
+Ashita/config/minimap/
+Ashita/config/nameplate/
+Ashita/config/pivot/
+Ashita/config/sandbox/
+Ashita/config/imgui.ini
+Ashita/logs/
+Ashita/screenshots/
+Ashita/scripts/newhope_addons.txt
+Ashita/console.log
+Ashita/crash.log
