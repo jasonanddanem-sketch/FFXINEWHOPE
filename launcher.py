@@ -49,6 +49,8 @@ ORANGE    = "#e67e22"
 # Ashita addon download (custom GitHub repos)
 # ---------------------------------------------------------------------------
 GITHUB_GSUI_API = "https://api.github.com/repos/jasonanddanem-sketch/GSUI/contents"
+HD_MAPS_ZIP = "https://github.com/criticalxi/xicombinedmaps/archive/refs/heads/main.zip"
+HD_MAPS_SUBDIR = "xicombinedmaps-main/2048x2048"  # path inside the zip
 
 # Plugins that are always loaded (essential for Ashita operation)
 ESSENTIAL_PLUGINS = {"Addons", "Thirdparty"}
@@ -344,6 +346,8 @@ class LauncherApp:
         self._button(bot, "Settings", self._show_setup,
                      colour=BG_LIGHT, width=8).pack(side="right")
         self._button(bot, "Addons", self._show_addons,
+                     colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
+        self._button(bot, "HD Maps", self._download_hd_maps,
                      colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
 
         # Enter key to login
@@ -1039,6 +1043,123 @@ ffxi = {ffxi_game_path}
                      colour=BG_LIGHT, width=12).pack(side="left", expand=True)
 
         popup.protocol("WM_DELETE_WINDOW", popup.destroy)
+
+    # ------------------------------------------------------------------
+    # HD Maps download
+    # ------------------------------------------------------------------
+    def _download_hd_maps(self):
+        """Download HD combined maps from GitHub and install into Ashita."""
+        ashita_path = self.config.get("ashita_path", "")
+        if not ashita_path:
+            messagebox.showinfo("Ashita Not Found",
+                                "Ashita was not detected.")
+            return
+
+        ashita_dir = os.path.dirname(ashita_path)
+        maps_dir = os.path.join(ashita_dir, "polplugins", "DATs",
+                                "xicombinedmaps")
+
+        # Check if already installed
+        if os.path.isdir(maps_dir) and os.listdir(maps_dir):
+            result = messagebox.askyesno(
+                "HD Maps Already Installed",
+                "HD Combined Maps are already installed.\n\n"
+                "Do you want to re-download and replace them?")
+            if not result:
+                return
+
+        result = messagebox.askyesno(
+            "Download HD Maps",
+            "This will download the HD Combined Maps pack\n"
+            "from github.com/criticalxi/xicombinedmaps\n\n"
+            "Download size: ~600 MB\n\n"
+            "The maps will be installed into Ashita's\n"
+            "Pivot overlay directory.\n\n"
+            "Continue?")
+        if not result:
+            return
+
+        self._status_var.set("Downloading HD Maps...")
+        t = threading.Thread(target=self._do_download_hd_maps,
+                             args=(ashita_dir,), daemon=True)
+        t.start()
+
+    def _do_download_hd_maps(self, ashita_dir: str):
+        """Download and extract HD maps (runs on background thread)."""
+        import zipfile
+        import shutil
+
+        maps_dir = os.path.join(ashita_dir, "polplugins", "DATs",
+                                "xicombinedmaps")
+        zip_path = os.path.join(ashita_dir, "polplugins", "DATs",
+                                "_hdmaps_download.zip")
+
+        try:
+            os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+
+            # Download the zip
+            self._set_status("Downloading HD Maps (this may take a while)...")
+            req = urllib.request.Request(
+                HD_MAPS_ZIP,
+                headers={"User-Agent": "NewHopeLauncher"})
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                with open(zip_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(131072)  # 128KB chunks
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            pct = int(downloaded * 100 / total)
+                            mb = downloaded // (1024 * 1024)
+                            self._set_status(
+                                f"Downloading HD Maps... {mb} MB ({pct}%)")
+
+            self._set_status("Extracting HD Maps...")
+
+            # Extract only the 2048x2048 subdirectory
+            if os.path.isdir(maps_dir):
+                shutil.rmtree(maps_dir)
+            os.makedirs(maps_dir, exist_ok=True)
+
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                prefix = HD_MAPS_SUBDIR + "/"
+                members = [m for m in zf.namelist()
+                           if m.startswith(prefix) and not m.endswith("/")]
+                total_files = len(members)
+                for i, member in enumerate(members):
+                    # Strip the prefix to get relative path (ROM/xxx/yyy.DAT)
+                    rel_path = member[len(prefix):]
+                    if not rel_path:
+                        continue
+                    dest = os.path.join(maps_dir, rel_path.replace("/", os.sep))
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with zf.open(member) as src, open(dest, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    if (i + 1) % 50 == 0 or i + 1 == total_files:
+                        self._set_status(
+                            f"Extracting HD Maps... {i + 1}/{total_files}")
+
+            # Clean up zip
+            os.remove(zip_path)
+
+            self._set_status("HD Maps installed!")
+            self.root.after(0, lambda: messagebox.showinfo(
+                "HD Maps Installed",
+                "HD Combined Maps have been installed.\n\n"
+                "They will be loaded by Pivot on next game launch."))
+
+        except Exception as exc:
+            self._set_status("HD Maps download failed.")
+            # Clean up on failure
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            self.root.after(0, lambda: messagebox.showerror(
+                "Download Error",
+                f"Could not download HD Maps:\n\n{exc}"))
 
     # ------------------------------------------------------------------
     # Update logic
