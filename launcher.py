@@ -343,6 +343,9 @@ class LauncherApp:
                     size=8, colour=FG_DIM).pack(side="left")
         self._button(bot, "Settings", self._show_setup,
                      colour=BG_LIGHT, width=8).pack(side="right")
+        if self.config.get("windower_path"):
+            self._button(bot, "Addons", self._show_addons,
+                         colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
 
         # Enter key to login
         self.root.bind("<Return>", lambda e: self._login())
@@ -418,41 +421,56 @@ class LauncherApp:
                    username: str, password: str,
                    use_windower: bool, windower_path: str):
         try:
-            import time
             ffxi_path = self.config.get("ffxi_path", "")
 
-            cmd = [
-                xiloader,
-                "--server", server_ip,
-                "--username", username,
-                "--password", password,
-                "--hide",
-            ]
-
             if use_windower and windower_path and os.path.exists(windower_path):
-                # Step 1: Launch Windower FIRST so it can hook into the game
-                # Windower must be running before the game starts to inject
-                # its plugins properly.
+                windower_dir = os.path.dirname(windower_path)
+
+                # Copy xiloader.exe into the Windower folder so it can
+                # be found reliably regardless of launcher install path
+                import shutil
+                dest_xiloader = os.path.join(windower_dir, "xiloader.exe")
+                try:
+                    shutil.copy2(xiloader, dest_xiloader)
+                except Exception as exc:
+                    self._set_status("Could not copy xiloader.")
+                    self.root.after(0, lambda e=exc: messagebox.showerror(
+                        "Error",
+                        f"Could not copy xiloader.exe to Windower folder:\n"
+                        f"{exc}"))
+                    return
+
+                # Write a "NewHope" profile into Windower's settings.xml
+                # so Windower launches the game through xiloader with the
+                # correct server / credentials.
+                self._set_status("Configuring Windower...")
+                ok = self._update_windower_profile(
+                    windower_dir, server_ip, username, password)
+                if not ok:
+                    self._set_status("Failed to update Windower settings.")
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Windower Error",
+                        "Could not write to Windower's settings.xml.\n\n"
+                        "Make sure the Windower folder is not read-only."))
+                    return
+
+                # Launch Windower with -p to auto-start the profile
+                # (skips the interactive UI and launches the game directly)
                 self._set_status("Starting Windower...")
                 subprocess.Popen(
-                    [windower_path],
-                    cwd=os.path.dirname(windower_path),
-                )
-
-                # Step 2: Wait for Windower to fully initialize
-                time.sleep(5)
-
-                # Step 3: Launch xiloader (auth + starts pol.exe)
-                # Windower will detect the new game process and hook in
-                self._set_status("Authenticating...")
-                subprocess.Popen(
-                    cmd,
-                    cwd=ffxi_path,
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    [windower_path, "-p", "NewHope"],
+                    cwd=windower_dir,
                 )
                 self._set_status("Game launched with Windower!")
             else:
-                # No Windower — just launch xiloader directly
+                # No Windower — launch xiloader directly
+                cmd = [
+                    xiloader,
+                    "--server", server_ip,
+                    "--username", username,
+                    "--password", password,
+                    "--hide",
+                ]
                 self._set_status("Authenticating...")
                 subprocess.Popen(
                     cmd,
@@ -465,6 +483,61 @@ class LauncherApp:
             self._set_status("Error")
             self.root.after(0, lambda: messagebox.showerror(
                 "Error", str(exc)))
+
+    # ------------------------------------------------------------------
+    # Windower profile helper
+    # ------------------------------------------------------------------
+    def _update_windower_profile(self, windower_dir: str,
+                                 server_ip: str,
+                                 username: str, password: str) -> bool:
+        """Add / update a 'NewHope' profile in Windower's settings.xml
+        that uses xiloader.exe as the executable with server args."""
+        import xml.etree.ElementTree as ET
+
+        settings_path = os.path.join(windower_dir, "settings.xml")
+        if not os.path.exists(settings_path):
+            return False
+
+        try:
+            tree = ET.parse(settings_path)
+            root = tree.getroot()
+
+            # Find or create the NewHope profile
+            profile = None
+            for p in root.findall("profile"):
+                if p.get("name") == "NewHope":
+                    profile = p
+                    break
+
+            if profile is None:
+                profile = ET.SubElement(root, "profile")
+                profile.set("name", "NewHope")
+                # Copy useful display settings from the default profile
+                default = root.find("profile[@name='']")
+                if default is not None:
+                    for child in default:
+                        if child.tag not in ("executable", "args"):
+                            copy = ET.SubElement(profile, child.tag)
+                            copy.text = child.text
+
+            # Helper to set a child element's text
+            def _set(tag, text):
+                el = profile.find(tag)
+                if el is None:
+                    el = ET.SubElement(profile, tag)
+                el.text = text
+
+            # xiloader.exe was already copied into the Windower folder
+            _set("executable", "xiloader.exe")
+            _set("args", (f"--server {server_ip} "
+                          f"--user {username} "
+                          f"--pass {password}"))
+
+            tree.write(settings_path, encoding="utf-8",
+                       xml_declaration=True)
+            return True
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # FFXI registry helpers
@@ -638,6 +711,215 @@ class LauncherApp:
 
     def _set_status(self, text: str):
         self.root.after(0, lambda: self._status_var.set(text))
+
+    # ------------------------------------------------------------------
+    # Addon / Plugin picker
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _scan_addons(windower_dir: str) -> list[str]:
+        """Return sorted list of addon names found in Windower's addons/ dir."""
+        addons_dir = os.path.join(windower_dir, "addons")
+        if not os.path.isdir(addons_dir):
+            return []
+        skip = {"libs", "new folder", "equip viewer"}
+        addons = []
+        for name in os.listdir(addons_dir):
+            if os.path.isdir(os.path.join(addons_dir, name)):
+                if name.lower() not in skip:
+                    addons.append(name)
+        return sorted(addons, key=str.lower)
+
+    @staticmethod
+    def _scan_plugins(windower_dir: str) -> list[str]:
+        """Return sorted list of plugin names (no .dll) from plugins/ dir."""
+        plugins_dir = os.path.join(windower_dir, "plugins")
+        if not os.path.isdir(plugins_dir):
+            return []
+        skip = {"luacore.dll"}
+        plugins = []
+        for name in os.listdir(plugins_dir):
+            if name.lower().endswith(".dll") and name.lower() not in skip:
+                plugins.append(name[:-4])  # strip .dll
+        return sorted(plugins, key=str.lower)
+
+    @staticmethod
+    def _read_autoload(settings_path: str) -> tuple[set, set]:
+        """Parse settings.xml and return (enabled_addons, enabled_plugins)."""
+        import xml.etree.ElementTree as ET
+
+        addons: set[str] = set()
+        plugins: set[str] = set()
+        if not os.path.exists(settings_path):
+            return addons, plugins
+        try:
+            tree = ET.parse(settings_path)
+            autoload = tree.getroot().find("autoload")
+            if autoload is None:
+                return addons, plugins
+            for el in autoload.findall("addon"):
+                if el.text and el.text.strip():
+                    addons.add(el.text.strip())
+            for el in autoload.findall("plugin"):
+                if el.text and el.text.strip():
+                    plugins.add(el.text.strip())
+        except Exception:
+            pass
+        return addons, plugins
+
+    @staticmethod
+    def _save_autoload(settings_path: str, addon_vars: dict, plugin_vars: dict):
+        """Write checked addons/plugins into the <autoload> section."""
+        import xml.etree.ElementTree as ET
+
+        tree = ET.parse(settings_path)
+        root = tree.getroot()
+        autoload = root.find("autoload")
+        if autoload is None:
+            autoload = ET.SubElement(root, "autoload")
+
+        # Remove existing addon/plugin entries
+        for el in list(autoload):
+            if el.tag in ("addon", "plugin"):
+                autoload.remove(el)
+
+        # Write checked addons
+        for name, var in sorted(addon_vars.items(), key=lambda x: x[0].lower()):
+            if var.get():
+                child = ET.SubElement(autoload, "addon")
+                child.text = name
+
+        # Write checked plugins
+        for name, var in sorted(plugin_vars.items(), key=lambda x: x[0].lower()):
+            if var.get():
+                child = ET.SubElement(autoload, "plugin")
+                child.text = name
+
+        tree.write(settings_path, encoding="utf-8", xml_declaration=True)
+
+    def _show_addons(self):
+        """Open the Addons & Plugins picker dialog."""
+        windower_path = self.config.get("windower_path", "")
+        if not windower_path:
+            return
+        windower_dir = os.path.dirname(windower_path)
+        settings_path = os.path.join(windower_dir, "settings.xml")
+
+        if not os.path.exists(settings_path):
+            messagebox.showerror(
+                "Settings Not Found",
+                f"Could not find settings.xml in:\n{windower_dir}\n\n"
+                "Launch Windower once first to generate it.")
+            return
+
+        addons = self._scan_addons(windower_dir)
+        plugins = self._scan_plugins(windower_dir)
+        enabled_addons, enabled_plugins = self._read_autoload(settings_path)
+
+        # --- Build popup ---
+        popup = tk.Toplevel(self.root)
+        popup.title("Addons & Plugins")
+        popup.configure(bg=BG)
+        popup.geometry("360x500")
+        popup.resizable(False, True)
+        popup.transient(self.root)
+        popup.grab_set()
+
+        # Header
+        self._label(popup, "Windower Addons & Plugins", size=13, bold=True,
+                    colour=GOLD).pack(pady=(12, 8))
+
+        # Scrollable area
+        container = tk.Frame(popup, bg=BG)
+        container.pack(fill="both", expand=True, padx=10)
+
+        canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(container, orient="vertical",
+                                 command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG)
+
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_id = canvas.create_window((0, 0), window=inner, anchor="n")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Keep inner frame centered when canvas resizes
+        def _center_inner(event):
+            canvas.itemconfigure(canvas_id, width=event.width)
+        canvas.bind("<Configure>", _center_inner)
+
+        # Mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_wheel(event=None):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_wheel(event=None):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
+
+        addon_vars: dict[str, tk.BooleanVar] = {}
+        plugin_vars: dict[str, tk.BooleanVar] = {}
+
+        # --- Addons section ---
+        self._label(inner, "Addons", size=11, bold=True,
+                    colour=GOLD).pack(pady=(6, 0))
+        tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
+
+        if addons:
+            for name in addons:
+                var = tk.BooleanVar(value=(name in enabled_addons))
+                addon_vars[name] = var
+                tk.Checkbutton(inner, text=name, variable=var,
+                               bg=BG, fg=FG, selectcolor=BG_ENTRY,
+                               activebackground=BG, activeforeground=FG,
+                               font=("Segoe UI", 9),
+                               anchor="w").pack(fill="x", padx=20)
+        else:
+            self._label(inner, "No addons found.", size=9,
+                        colour=FG_DIM).pack(padx=20)
+
+        # --- Plugins section ---
+        self._label(inner, "Plugins", size=11, bold=True,
+                    colour=GOLD).pack(pady=(12, 0))
+        tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
+
+        if plugins:
+            for name in plugins:
+                var = tk.BooleanVar(value=(name in enabled_plugins))
+                plugin_vars[name] = var
+                tk.Checkbutton(inner, text=name, variable=var,
+                               bg=BG, fg=FG, selectcolor=BG_ENTRY,
+                               activebackground=BG, activeforeground=FG,
+                               font=("Segoe UI", 9),
+                               anchor="w").pack(fill="x", padx=20)
+        else:
+            self._label(inner, "No plugins found.", size=9,
+                        colour=FG_DIM).pack(padx=20)
+
+        # --- Buttons ---
+        btn_frame = tk.Frame(popup, bg=BG)
+        btn_frame.pack(fill="x", padx=10, pady=(8, 12))
+
+        def _save():
+            try:
+                self._save_autoload(settings_path, addon_vars, plugin_vars)
+                popup.destroy()
+            except Exception as exc:
+                messagebox.showerror("Error",
+                                     f"Could not save settings.xml:\n{exc}")
+
+        self._button(btn_frame, "Save", _save,
+                     colour=GREEN_BTN, width=12).pack(side="left", expand=True)
+        self._button(btn_frame, "Cancel", popup.destroy,
+                     colour=BG_LIGHT, width=12).pack(side="left", expand=True)
+
+        popup.protocol("WM_DELETE_WINDOW", popup.destroy)
 
 
 # ===================================================================
