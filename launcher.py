@@ -46,6 +46,33 @@ GREEN_BTN = "#2e7d32"
 RED_BTN   = "#c62828"
 ORANGE    = "#e67e22"
 
+# ---------------------------------------------------------------------------
+# Official Windower addons (from github.com/Windower/Lua)
+# ---------------------------------------------------------------------------
+GITHUB_ADDON_API = "https://api.github.com/repos/Windower/Lua/contents/addons"
+GITHUB_GSUI_API  = "https://api.github.com/repos/jasonanddanem-sketch/GSUI/contents"
+
+WINDOWER_ADDONS = [
+    "AnnounceTarget", "AutoControl", "AutoJoin", "AutoRA", "AutoReply",
+    "AutoRoll", "AzureSets", "BattleMod", "BattleStations", "Blist",
+    "BlockList", "BluGuide", "BoxDestroyer", "Cancel", "Capes",
+    "CapeTracker", "Chars", "ChatLink", "ChatPorter", "Clock",
+    "Clue", "ConsoleBG", "CraftMon", "DamageMeter", "DanceMon",
+    "DebuffNotify", "Distance", "DistancePlus", "DressUp", "DynamisHelper",
+    "EasyFarm", "EnemyBar", "EquipViewer", "Eval", "FastCS",
+    "FindAll", "FishBuddy", "Folio", "GameTime", "GearInfo",
+    "GearSwap", "GilTracker", "GSUI", "HealBot", "HideConsole", "InfoBar",
+    "InstaLS", "IPC", "ItemCollector", "JobChange", "Jump",
+    "KeyItems", "Linker", "Logger", "MacroChanger", "Mappy",
+    "MeritPointCalc", "MobTracker", "NamePlates", "OBI", "Organizer",
+    "PetSchool", "PetTP", "PointWatch", "Porter", "Pouches",
+    "Respond", "Reive", "RollTracker", "Runic", "Scoreboard",
+    "Sell", "SetBGM", "Shortcuts", "SilverLibs", "Songs",
+    "Sparks", "SpellCheck", "StatusTimer", "TFour", "Texts",
+    "Timers", "Timestamp", "TParty", "Treasury", "TreasurePool",
+    "Trusts", "Update", "VanaTunes", "VisibleFavor", "WAR",
+    "WatchDog", "Weather", "WS", "XIPivot", "Yush",
+]
 
 # ===================================================================
 # Main Application
@@ -61,6 +88,17 @@ class LauncherApp:
         self._set_window_icon()
 
         self.config = self._load_config()
+
+        # Auto-detect bundled Windower next to the launcher
+        if not self.config.get("windower_path"):
+            bundled = os.path.join(APP_DIR, "Windower", "Windower.exe")
+            if os.path.exists(bundled):
+                self.config["windower_path"] = bundled
+                self._save_config()
+
+        # Track freshly downloaded addons (auto-checked when dialog reopens)
+        self._newly_downloaded: set[str] = set()
+        self._download_active = False
 
         # Load logo images (keep references to prevent garbage collection)
         self._logo_img = self._load_image("logo.png")
@@ -187,21 +225,6 @@ class LauncherApp:
                     "e.g.  C:\\Program Files (x86)\\PlayOnline\\SquareEnix\\FINAL FANTASY XI",
                     size=8, colour=FG_DIM).pack(anchor="w", pady=(0, 6))
 
-        # --- Windower Path ---
-        self._label(frame, "Windower Path  (optional)", size=10,
-                    bold=True).pack(anchor="w")
-        row2 = tk.Frame(frame, bg=BG)
-        row2.pack(fill="x", pady=(2, 10))
-
-        self._windower_var = tk.StringVar(
-            value=self.config.get("windower_path", ""))
-        self._entry(row2, self._windower_var, width=42).pack(side="left")
-        self._button(row2, "Browse", self._browse_windower,
-                     colour=BG_LIGHT, width=8).pack(side="right", padx=(6, 0))
-
-        self._label(frame, "Path to Windower.exe — leave blank to skip",
-                    size=8, colour=FG_DIM).pack(anchor="w", pady=(0, 6))
-
         # --- Server IP ---
         self._label(frame, "Server Address", size=10,
                     bold=True).pack(anchor="w")
@@ -224,13 +247,6 @@ class LauncherApp:
         if path:
             self._ffxi_var.set(path)
 
-    def _browse_windower(self):
-        path = filedialog.askopenfilename(
-            title="Select Windower.exe",
-            filetypes=[("Executable", "*.exe"), ("All files", "*.*")])
-        if path:
-            self._windower_var.set(path)
-
     def _save_setup(self):
         ffxi = self._ffxi_var.get().strip()
         if not ffxi:
@@ -242,7 +258,6 @@ class LauncherApp:
             return
 
         self.config["ffxi_path"]     = ffxi
-        self.config["windower_path"] = self._windower_var.get().strip()
         self.config["server_ip"]     = (self._server_var.get().strip()
                                         or "127.0.0.1")
         self._save_config()
@@ -312,15 +327,6 @@ class LauncherApp:
                        activeforeground=FG,
                        font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
 
-        self._windower_chk = tk.BooleanVar(
-            value=bool(self.config.get("windower_path")))
-        if self.config.get("windower_path"):
-            tk.Checkbutton(chk_frame, text="Use Windower",
-                           variable=self._windower_chk, bg=BG, fg=FG,
-                           selectcolor=BG_ENTRY, activebackground=BG,
-                           activeforeground=FG,
-                           font=("Segoe UI", 9)).pack(side="left", padx=(15, 0))
-
         # Buttons
         self._button(frame, "Login", self._login,
                      colour=GREEN_BTN, width=30).pack(pady=(15, 6))
@@ -343,9 +349,8 @@ class LauncherApp:
                     size=8, colour=FG_DIM).pack(side="left")
         self._button(bot, "Settings", self._show_setup,
                      colour=BG_LIGHT, width=8).pack(side="right")
-        if self.config.get("windower_path"):
-            self._button(bot, "Addons", self._show_addons,
-                         colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
+        self._button(bot, "Addons", self._show_addons,
+                     colour=BG_LIGHT, width=8).pack(side="right", padx=(0, 6))
 
         # Enter key to login
         self.root.bind("<Return>", lambda e: self._login())
@@ -404,8 +409,8 @@ class LauncherApp:
             return
 
         server_ip = self.config.get("server_ip", "127.0.0.1")
-        use_windower = self._windower_chk.get() if hasattr(self, '_windower_chk') else False
         windower_path = self.config.get("windower_path", "")
+        use_windower = bool(windower_path)
 
         action = "Creating account..." if create_account else "Logging in..."
         self._status_var.set(action)
@@ -796,10 +801,84 @@ class LauncherApp:
 
         tree.write(settings_path, encoding="utf-8", xml_declaration=True)
 
+    # ------------------------------------------------------------------
+    # Addon download helpers
+    # ------------------------------------------------------------------
+    def _fetch_github_dir(self, api_url: str, local_dir: str,
+                          status_cb) -> None:
+        """Recursively download a GitHub directory via the Contents API."""
+        import json as _json
+
+        req = urllib.request.Request(
+            api_url,
+            headers={"Accept": "application/vnd.github.v3+json",
+                     "User-Agent": "NewHopeLauncher"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            entries = _json.loads(resp.read().decode("utf-8"))
+
+        os.makedirs(local_dir, exist_ok=True)
+        for entry in entries:
+            name = entry["name"]
+            if entry["type"] == "dir":
+                self._fetch_github_dir(entry["url"],
+                                       os.path.join(local_dir, name),
+                                       status_cb)
+            elif entry["type"] == "file" and entry.get("download_url"):
+                status_cb(f"Downloading {name}...")
+                dl_req = urllib.request.Request(
+                    entry["download_url"],
+                    headers={"User-Agent": "NewHopeLauncher"})
+                with urllib.request.urlopen(dl_req, timeout=30) as dl_resp:
+                    data = dl_resp.read()
+                with open(os.path.join(local_dir, name), "wb") as f:
+                    f.write(data)
+
+    def _download_addon(self, addon_name: str, windower_dir: str,
+                        status_cb, done_cb) -> None:
+        """Download an addon from GitHub (runs on a background thread)."""
+        import shutil
+
+        addons_dir = os.path.join(windower_dir, "addons")
+        temp_dir = os.path.join(addons_dir, f"{addon_name}_downloading")
+        final_dir = os.path.join(addons_dir, addon_name)
+
+        try:
+            if addon_name == "GSUI":
+                api_url = GITHUB_GSUI_API
+            else:
+                api_url = f"{GITHUB_ADDON_API}/{addon_name}"
+            self._fetch_github_dir(api_url, temp_dir, status_cb)
+
+            # Verify we got lua files
+            has_lua = any(f.endswith(".lua")
+                         for f in os.listdir(temp_dir))
+            if not has_lua:
+                raise RuntimeError("No .lua files found — invalid addon.")
+
+            # Move to final location
+            if os.path.exists(final_dir):
+                shutil.rmtree(final_dir)
+            os.rename(temp_dir, final_dir)
+
+            self._newly_downloaded.add(addon_name)
+            done_cb(True, "")
+        except Exception as exc:
+            # Clean up temp dir on failure
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            done_cb(False, str(exc))
+        finally:
+            self._download_active = False
+
+    # ------------------------------------------------------------------
+    # Addon / Plugin dialog
+    # ------------------------------------------------------------------
     def _show_addons(self):
         """Open the Addons & Plugins picker dialog."""
         windower_path = self.config.get("windower_path", "")
         if not windower_path:
+            messagebox.showinfo("Windower Not Found",
+                                "Windower was not detected.")
             return
         windower_dir = os.path.dirname(windower_path)
         settings_path = os.path.join(windower_dir, "settings.xml")
@@ -819,7 +898,7 @@ class LauncherApp:
         popup = tk.Toplevel(self.root)
         popup.title("Addons & Plugins")
         popup.configure(bg=BG)
-        popup.geometry("360x500")
+        popup.geometry("380x560")
         popup.resizable(False, True)
         popup.transient(self.root)
         popup.grab_set()
@@ -866,14 +945,16 @@ class LauncherApp:
         addon_vars: dict[str, tk.BooleanVar] = {}
         plugin_vars: dict[str, tk.BooleanVar] = {}
 
-        # --- Addons section ---
-        self._label(inner, "Addons", size=11, bold=True,
+        # --- Installed Addons section ---
+        self._label(inner, "Installed Addons", size=11, bold=True,
                     colour=GOLD).pack(pady=(6, 0))
         tk.Frame(inner, bg=GOLD, height=1).pack(fill="x", pady=(0, 4))
 
         if addons:
             for name in addons:
-                var = tk.BooleanVar(value=(name in enabled_addons))
+                checked = (name in enabled_addons
+                           or name in self._newly_downloaded)
+                var = tk.BooleanVar(value=checked)
                 addon_vars[name] = var
                 tk.Checkbutton(inner, text=name, variable=var,
                                bg=BG, fg=FG, selectcolor=BG_ENTRY,
@@ -902,6 +983,65 @@ class LauncherApp:
             self._label(inner, "No plugins found.", size=9,
                         colour=FG_DIM).pack(padx=20)
 
+        # --- Available Addons (Download) section ---
+        installed_lower = {a.lower() for a in addons}
+        available = [a for a in WINDOWER_ADDONS
+                     if a.lower() not in installed_lower]
+
+        if available:
+            self._label(inner, "Available Addons (Download)", size=11,
+                        bold=True, colour=ORANGE).pack(pady=(12, 0))
+            tk.Frame(inner, bg=ORANGE, height=1).pack(fill="x", pady=(0, 4))
+
+            for addon_name in available:
+                row = tk.Frame(inner, bg=BG)
+                row.pack(fill="x", padx=20, pady=1)
+
+                self._label(row, addon_name, size=9).pack(
+                    side="left", anchor="w")
+
+                status_lbl = tk.Label(row, text="", font=("Segoe UI", 8),
+                                      fg=FG_DIM, bg=BG)
+                status_lbl.pack(side="right", padx=(4, 0))
+
+                dl_btn = tk.Button(
+                    row, text="Download", font=("Segoe UI", 8, "bold"),
+                    fg="white", bg=ORANGE, activebackground=ORANGE,
+                    activeforeground="white", relief="flat", bd=0,
+                    cursor="hand2", width=9)
+                dl_btn.pack(side="right")
+
+                def _start_download(name=addon_name, btn=dl_btn,
+                                    lbl=status_lbl):
+                    if self._download_active:
+                        return
+                    self._download_active = True
+                    btn.configure(state="disabled", text="...")
+
+                    def _status(msg, _lbl=lbl):
+                        self.root.after(0, lambda: _lbl.configure(text=msg))
+
+                    def _done(ok, err, _popup=popup):
+                        def _finish():
+                            if ok:
+                                # Reopen dialog so the addon appears
+                                # in the installed section
+                                _popup.destroy()
+                                self._show_addons()
+                            else:
+                                btn.configure(state="normal",
+                                              text="Download")
+                                lbl.configure(text=f"Error: {err[:30]}")
+                        self.root.after(0, _finish)
+
+                    t = threading.Thread(
+                        target=self._download_addon,
+                        args=(name, windower_dir, _status, _done),
+                        daemon=True)
+                    t.start()
+
+                dl_btn.configure(command=_start_download)
+
         # --- Buttons ---
         btn_frame = tk.Frame(popup, bg=BG)
         btn_frame.pack(fill="x", padx=10, pady=(8, 12))
@@ -909,6 +1049,7 @@ class LauncherApp:
         def _save():
             try:
                 self._save_autoload(settings_path, addon_vars, plugin_vars)
+                self._newly_downloaded.clear()
                 popup.destroy()
             except Exception as exc:
                 messagebox.showerror("Error",

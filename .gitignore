@@ -5,3 +5,11 @@ __pycache__/
 installer_output/
 dist/config.json
 dist/*.old.exe
+
+# Windower user-generated data
+Windower/screenshots/
+Windower/console.log
+Windower/crash.log
+Windower/addons/*/data/
+Windower/plugins/settings/*.xml
+Windower/scripts/autoload/
